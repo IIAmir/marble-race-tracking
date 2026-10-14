@@ -35,6 +35,7 @@ class MarbleState:
     maneuver_until: float = -1.0  # boosted process noise after a surprising measurement
     placed: bool = False  # inserted into the leaderboard order
     n_obs: int = 0
+    fresh: int = 0  # observations since first sighting or since re-acquisition after a long gap
 
     @property
     def initialized(self) -> bool:
@@ -106,6 +107,7 @@ class FusionEngine:
         free_coast_time: float = 0.15,
         coast_tolerance: float = 0.05,
         tracking_timeout: float = 0.1,
+        reacquire_gap: float = 0.3,
         lost_after: float = 1.5,
         camera_timeout: float = 0.3,
         rank_margin: float = 0.012,
@@ -134,6 +136,7 @@ class FusionEngine:
         self.lost_after = lost_after
         self.camera_timeout = camera_timeout
         self.rank_margin = rank_margin
+        self.reacquire_gap = reacquire_gap
         self.photo_finish_s = photo_finish_s
         self.photo_finish_k = photo_finish_k
         self.rank_k = rank_k
@@ -230,6 +233,18 @@ class FusionEngine:
             m.x = np.array([s, float(np.median(speeds)) if speeds else 0.0])
             m.P = np.diag([r, 1.0])
             m.t = t
+            m.fresh = 0
+        elif m.last_obs_t is not None and t - m.last_obs_t > self.reacquire_gap:
+            # Re-acquired after a long gap (dead camera, tunnel, dropped frames): filtering
+            # through the jump would read it as a burst of speed. Restart from the average
+            # speed across the gap, with wide velocity uncertainty, and require fresh
+            # sightings before the marble may gain places again (status "acquiring").
+            v_avg = (s - m.last_obs_s) / (t - m.last_obs_t)
+            m.x = np.array([s, float(np.clip(v_avg, 0.0, 4.0))])
+            m.P = np.diag([r, 0.25])
+            m.t = t
+            m.maneuver_until = -1.0
+            m.fresh = 0
         else:
             H, y, S = self._innovation(m, t, s, r)
             if y * y / S > self.maneuver_nis:
@@ -258,6 +273,7 @@ class FusionEngine:
         m.last_obs_t, m.last_obs_s, m.last_obs_v, m.last_obs_r_px = t, s, float(m.x[1]), r_px
         m.last_obs_cam = cam_id
         m.n_obs += 1
+        m.fresh += 1
 
     def _refine_finish(self, m: MarbleState) -> None:
         """Replace the two-frame interpolation by a weighted least-squares fit.
@@ -408,8 +424,8 @@ class FusionEngine:
         if not m.initialized:
             return "unseen"
         age = now - m.last_obs_t
-        if m.n_obs < 3 and age <= self.tracking_timeout:
-            return "acquiring"  # too few observations for a reliable speed
+        if (m.n_obs < 3 or m.fresh < 3) and age <= self.tracking_timeout:
+            return "acquiring"  # too few (recent) observations for a reliable speed
         if age <= self.tracking_timeout:
             return "tracking"
         return "coasting" if age <= self.lost_after else "lost"

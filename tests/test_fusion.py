@@ -165,3 +165,21 @@ def test_bounce_is_followed_within_two_frames():
             errs.append(abs(eng.marbles[0].x[0] - s))
     assert max(errs) < 0.03
     assert eng.status(eng.marbles[0], eng.now) == "tracking"
+
+
+def test_reacquisition_after_long_gap_does_not_invent_speed():
+    eng = FusionEngine(["a", "b"], s_finish=100, track_length=200)
+    # 'a' runs at 1.2 m/s, vanishes for 1.4 s (dead camera), reappears where it really is.
+    for n in range(30):
+        t = n / 30
+        eng.process(t, [det(1.0 + 1.2 * t, 0, k=2, t=t), det(1.05 + 1.2 * t, 1, k=2, t=t)], "c")
+    for n in range(30, 72):
+        t = n / 30
+        eng.process(t, [det(1.05 + 1.2 * t, 1, k=2, t=t)], "c")
+    t = 72 / 30
+    eng.process(t, [det(1.0 + 1.2 * t, 0, k=2, t=t), det(1.05 + 1.2 * t, 1, k=2, t=t)], "c")
+    a = eng.marbles[0]
+    assert abs(a.x[1] - 1.2) < 0.2  # speed from the average across the gap, not a burst
+    assert eng.status(a, eng.now) == "acquiring"  # must be seen again before it can gain places
+    order = [e.marble_id for e in eng.leaderboard()]
+    assert order.index("b") < order.index("a")  # no overtake on a single re-sighting
