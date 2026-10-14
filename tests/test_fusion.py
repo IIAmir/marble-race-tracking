@@ -183,3 +183,19 @@ def test_reacquisition_after_long_gap_does_not_invent_speed():
     assert eng.status(a, eng.now) == "acquiring"  # must be seen again before it can gain places
     order = [e.marble_id for e in eng.leaderboard()]
     assert order.index("b") < order.index("a")  # no overtake on a single re-sighting
+
+
+def test_hidden_marble_knocked_backwards_stays_in_its_blind_zone():
+    # 'a' bounces back off an obstacle at a tunnel exit and rolls back into the tunnel
+    # (2.0-3.0 m). Its filter velocity is negative, but it cannot leave the tunnel
+    # backwards unseen, so 'b' (crawling at 1.5 m, visible) must not "pass" it.
+    eng = FusionEngine(["a", "b"], s_finish=100, track_length=200, static_blind_zones=[(2.0, 3.0)])
+    for n in range(16):
+        t = n / 30
+        eng.process(t, [det(3.4 - 0.8 * t, 0, k=2, t=t), det(1.5 + 0.1 * t, 1, k=2, t=t)], "c")
+    for n in range(16, 120):
+        t = n / 30
+        eng.process(t, [det(1.5 + 0.1 * t, 1, k=2, t=t)], "c")
+    a = eng.marbles[0]
+    assert a.x[0] >= 2.0 - 0.06
+    assert [e.marble_id for e in eng.leaderboard()] == ["a", "b"]

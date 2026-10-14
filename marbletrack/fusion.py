@@ -198,6 +198,10 @@ class FusionEngine:
         cap = self._coast_cap(m)
         if m.x[0] > cap:
             m.x[0] = cap
+        floor = self._coast_floor(m)
+        if m.x[0] < floor:  # cannot have rolled back out of view: stop there
+            m.x[0] = floor
+            m.x[1] = max(m.x[1], 0.0)
 
     def _coast_cap(self, m: MarbleState) -> float:
         """Furthest an unobserved marble may be predicted.
@@ -211,6 +215,20 @@ class FusionEngine:
             if a <= cap and b > s_last:
                 cap = max(cap, b + self.coast_tolerance)
         return cap
+
+    def _coast_floor(self, m: MarbleState) -> float:
+        """Furthest back an unobserved marble may be predicted (mirror of ``_coast_cap``).
+
+        A marble knocked backwards while hidden keeps a negative velocity in the
+        filter; extrapolated without limit it would drift out of the blind zone it
+        is in, where a camera would have seen it, and let others "pass" it.
+        """
+        s_last = m.last_obs_s
+        floor = s_last - self.coast_tolerance + min(0.0, m.last_obs_v) * self.free_coast_time
+        for a, b in sorted(self.blind_zones, reverse=True):
+            if b >= floor and a < s_last:
+                floor = min(floor, a - self.coast_tolerance)
+        return floor
 
     def _innovation(self, m: MarbleState, t: float, s: float, r: float):
         """Measurement model, valid for late (out-of-sequence) measurements too.

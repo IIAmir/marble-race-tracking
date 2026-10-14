@@ -900,6 +900,12 @@ class Tracker {
     for (let pass = 0; pass < 2; pass++) for (const [a, b] of this.blind) if (a <= cap + 0.001 && b > cap) cap = b;
     return lap + cap;
   }
+  blindBehind(P) {  // mirror of blindAhead: furthest back a hidden marble may be from P
+    const T = this.T, lap = T.closed ? Math.floor(P / T.L) * T.L : 0, w = P - lap;
+    let lo = w;
+    for (let pass = 0; pass < 2; pass++) for (const [a, b] of this.blind) if (b >= lo - 0.001 && a < lo) lo = a;
+    return lap + lo;
+  }
   status(m, now) {
     if (m.finishT != null) return "finished";
     if (m.t == null) return "unseen";
@@ -917,6 +923,9 @@ class Tracker {
     m.P = [[p00, p01], [p01, p11]]; m.t = t;
     const cap = this.blindAhead(m.lastS + 0.05 + Math.max(0, m.lastV) * 0.15);
     if (m.x[0] > cap) m.x[0] = cap;
+    // nor can it roll back out of view: a hidden marble knocked backwards stops at the blind zone's start
+    const lo = this.blindBehind(m.lastS - 0.05 + Math.min(0, m.lastV) * 0.15);
+    if (m.x[0] < lo) { m.x[0] = lo; if (m.x[1] < 0) m.x[1] = 0; }
   }
   unwrap(m, s) {  // measured lap position -> cumulative progress nearest the prediction
     const T = this.T;
@@ -1239,7 +1248,7 @@ function buildWorld(seed) {
   if (W) { scene.remove(W.root); W.labels.forEach((l) => l.element.remove()); }
   const mapKey = $("map").value, mdef = MAPS[mapKey];
   const T = new Track(mdef.build());
-  srnd = mulberry32(seed ^ 0x5bd1e995);
+  srnd = mulberry32(seed ^ 0x5bd1e995); simAcc = 0;
   const phys = new Physics(T, +$("count").value, +$("laps").value, seed, +$("chaos").value, $("obstacles").checked, mapKey);
   const cams = buildRig(T, $("rig").value);
   const root = new THREE.Group(); scene.add(root);

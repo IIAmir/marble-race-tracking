@@ -52,8 +52,10 @@ A self-contained browser app that simulates races live and tracks them live:
 * **Tracker**: a JavaScript port of `marbletrack/fusion.py` (colour + motion assignment with the
   Hungarian algorithm, Kalman filter on track progress, blind zones, camera health, confirmed
   overtakes, least-squares finish timing, photo-finish flags), scored against the physics live.
-  The re-acquisition rule found by fault-injection testing (restart from the average speed
-  across a long gap, three fresh sightings before gaining places) is now in the Python engine too.
+  Two rules found by fault-injection testing are in the Python engine too: a marble re-acquired
+  after a long gap restarts from its average speed across the gap and needs three fresh
+  sightings before gaining places; and a hidden marble's prediction is bounded backwards as well
+  as forwards (one knocked back into a tunnel cannot drift out of it unseen).
   The obstacle course adds three simulator-only refinements, each found by a failing race:
   the surveyed obstacle layout raises process noise where a marble can be reversed in one frame
   and widens measurement noise after jump ramps (an airborne marble is mapped with parallax);
