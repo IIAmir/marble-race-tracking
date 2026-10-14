@@ -28,11 +28,21 @@ class Polyline:
     vertex instead of being derived from vertex spacing, perspective
     foreshortening in a camera image does not distort progress as long as the
     vertices are dense (a few centimetres apart).
+
+    ``normals`` (optional, image polylines) gives, per vertex, the image vector
+    of one metre of *cross-track* displacement. Under an oblique view that
+    direction is not perpendicular to the track's image, so the nearest point in
+    pixels slides along the track for a marble in the inside or outside lane.
+    With normals, :meth:`project` decomposes a point as
+    ``vertex + t * segment + u * normal`` (an oblique projection that uses the
+    camera's own skew), giving progress from ``t`` and the lateral offset ``u``
+    in metres.
     """
 
-    def __init__(self, points, s):
+    def __init__(self, points, s, normals=None):
         self.points = np.asarray(points, dtype=float)
         self.s = np.asarray(s, dtype=float)
+        self.normals = None if normals is None else np.asarray(normals, dtype=float)
         if len(self.points) < 2 or len(self.points) != len(self.s):
             raise ValueError("need >= 2 vertices with one s value each")
         if np.any(np.diff(self.s) <= 0):
@@ -69,6 +79,25 @@ class Polyline:
         tangent = self._ab[idx] / self._seglen[idx][..., None]
         return xy, tangent
 
+    def _project_oblique(self, p, max_dist):
+        n = 0.5 * (self.normals[:-1] + self.normals[1:])
+        d = p - self._a
+        det = self._ab[:, 0] * n[:, 1] - self._ab[:, 1] * n[:, 0]
+        ok = np.abs(det) > 1e-9
+        det = np.where(ok, det, 1.0)
+        t = (d[:, 0] * n[:, 1] - d[:, 1] * n[:, 0]) / det
+        u = (self._ab[:, 0] * d[:, 1] - self._ab[:, 1] * d[:, 0]) / det
+        inside = ok & (t >= -0.02) & (t <= 1.02) & (np.abs(u) <= max_dist)
+        idx = np.flatnonzero(inside)
+        out = []
+        for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1) if idx.size else []:
+            k = run[np.argmin(np.abs(u[run]))]
+            tk = float(np.clip(t[k], 0.0, 1.0))
+            ds = self.s[k + 1] - self.s[k]
+            out.append(Projection(s=float(self.s[k] + tk * ds), dist=float(abs(u[k])),
+                                  s_per_unit=float(ds / self._seglen[k])))
+        return sorted(out, key=lambda c: c.dist)
+
     def section(self, s_lo: float, s_hi: float) -> "Polyline":
         """Sub-polyline covering ``[s_lo, s_hi]`` (endpoints interpolated)."""
         inner = (self.s > s_lo) & (self.s < s_hi)
@@ -78,6 +107,9 @@ class Polyline:
     def project(self, p, max_dist: float) -> list[Projection]:
         """Project point ``p`` onto the polyline.
 
+        Without normals ``dist``/``max_dist`` are in polyline units (pixels for
+        an image polyline); with normals they are metres of lateral offset.
+
         Returns one candidate per *branch* of the polyline that passes within
         ``max_dist`` of ``p``, sorted by distance. More than one candidate occurs
         where the track crosses or runs alongside itself in the image (bridges,
@@ -85,6 +117,8 @@ class Polyline:
         each marble's predicted progress.
         """
         p = np.asarray(p, dtype=float)
+        if self.normals is not None:
+            return self._project_oblique(p, max_dist)
         t = np.clip(((p - self._a) * self._ab).sum(axis=1) / self._len2, 0.0, 1.0)
         closest = self._a + t[:, None] * self._ab
         d = np.linalg.norm(p - closest, axis=1)

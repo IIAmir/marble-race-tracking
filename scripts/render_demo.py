@@ -139,7 +139,7 @@ def main():
             tiles = []
             for k in range(14):
                 cid = f"cam{k + 1:02d}"
-                f, d = latest.get(cid, (np.zeros((480, 640, 3), np.uint8), []))
+                f, d = latest.get(cid, (np.zeros_like(frame), []))
                 tile = annotate(f, d, 0.5)
                 down = not engine.camera_status().get(cid, True)
                 cv2.putText(tile, cid + (" OFFLINE" if down else ""), (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45,

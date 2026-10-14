@@ -35,10 +35,12 @@ def summarize(rows):
     keys = sorted({(r["scenario"], r["mode"], r["finish_cam"]) for r in rows})
     for sc, mode, fc in keys:
         rs = [r for r in rows if (r["scenario"], r["mode"], r["finish_cam"]) == (sc, mode, fc)]
+        view = rs[0]["view"]
         fin = np.array([r["finish_err_ms_max"] for r in rs])
         out.append({
             "scenario": sc,
             "mode": mode,
+            "view": view,
             "finish_cam": fc,
             "races": len(rs),
             "official_order_correct": sum(r["final_order_correct"] for r in rs),
@@ -47,6 +49,10 @@ def summarize(rows):
             "rank_accuracy_visible_mean": float(np.mean([r["rank_accuracy"] for r in rs])),
             "rank_accuracy_visible_min": float(np.min([r["rank_accuracy"] for r in rs])),
             "rank_accuracy_all_mean": float(np.mean([r["rank_accuracy_all"] for r in rs])),
+            "rank_accuracy_latency_mean": float(np.mean([r["rank_accuracy_latency"] for r in rs])),
+            "rank_accuracy_latency_min": float(np.min([r["rank_accuracy_latency"] for r in rs])),
+            "phantom_overtakes_total": int(sum(r["phantom_overtakes"] for r in rs)),
+            "overtakes_shown_total": int(sum(r["overtakes_shown"] for r in rs)),
             "finish_err_ms_mean": float(np.mean([r["finish_err_ms_mean"] for r in rs])),
             "finish_err_ms_p95_of_max": float(np.percentile(fin, 95)),
             "finish_err_ms_max": float(fin.max()),
@@ -75,13 +81,15 @@ def main():
             if row.get("edge"):
                 edges.append(row)
                 print(f"[{i}/{len(jobs)} {time.time() - t0:.0f}s] edge {row['case']}/{row['mode']} seed {row['seed']}: "
-                      f"rank {row['rank_accuracy']:.3f} id_err {row['id_errors']}", flush=True)
+                      f"rank {row['rank_accuracy']:.3f}/{row['rank_accuracy_latency']:.3f} phantom {row['phantom_overtakes']} "
+                      f"id_err {row['id_errors']}", flush=True)
                 continue
             rows.append(row)
             print(f"[{i}/{len(jobs)} {time.time() - t0:.0f}s] {row['scenario']}/{row['mode']}"
                   f"{'' if row['finish_cam'] else '/no-finish-cam'} seed {row['seed']}: "
                   f"order {'OK' if row['final_order_correct'] else 'WRONG'} "
-                  f"rank {row['rank_accuracy']:.3f} fin {row['finish_err_ms_max']:.1f} ms "
+                  f"rank {row['rank_accuracy']:.3f}/{row['rank_accuracy_latency']:.3f} phantom {row['phantom_overtakes']} "
+                  f"fin {row['finish_err_ms_max']:.1f} ms "
                   f"id_err {row['id_errors']}", flush=True)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     rows.sort(key=lambda r: (r["scenario"], r["mode"], r["finish_cam"], r["seed"]))

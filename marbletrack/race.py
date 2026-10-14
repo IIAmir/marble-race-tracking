@@ -1,6 +1,7 @@
 """End-to-end race runs on simulated cameras, scored against ground truth."""
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -18,6 +19,9 @@ from .sim import (
     serpentine_track,
     single_camera_rig,
 )
+
+
+_DEBUG = bool(os.environ.get("MARBLETRACK_DEBUG"))
 
 
 @dataclass
@@ -84,11 +88,15 @@ SCENARIOS = {
 class RaceReport:
     scenario: str
     mode: str
+    view: str
     seed: int
     n_cameras: int
     frames: int
     rank_accuracy: float  # share of instants whose ranking of all *visible* marbles is correct
     rank_accuracy_all: float  # same, including marbles hidden in tunnels / camera gaps
+    rank_accuracy_latency: float  # visible ranking correct allowing the 100 ms display budget
+    phantom_overtakes: int  # displayed passes that never happened on the track
+    overtakes_shown: int
     final_order_correct: bool  # official order (photo-finish pairs flagged for review count as ties)
     final_order_strict: bool  # exact order, no review allowed
     photo_finishes: int  # marbles flagged for photo-finish review
@@ -105,9 +113,28 @@ class RaceReport:
     replay: dict | None = None
 
 
+def build_cameras(mode, track, cfg, seed=0, fps=30.0, overlap=0.12, view=None, finish_cam=True):
+    """Camera rig for a mode. 14-camera mode and the finish camera use 45-degree
+    angled perspective cameras by default; ``view="topdown"`` gives the planar rig."""
+    from .sim3d import angled_camera_rig, angled_finish_camera
+
+    view = view or ("topdown" if mode == "single" else "angled")
+    if mode == "single":
+        cams = single_camera_rig(track, cfg, seed)
+    elif view == "angled":
+        cams = angled_camera_rig(track, cfg, seed=seed, fps=fps, overlap=overlap)
+    else:
+        cams = multi_camera_rig(track, cfg, seed=seed, fps=fps, overlap=overlap)
+    if finish_cam:
+        s_finish = track.s_range[1] - cfg.finish_before_end
+        cams.append(angled_finish_camera(track, cfg, s_finish, seed) if view != "topdown" or mode == "single"
+                    else finish_camera(track, cfg, s_finish, seed))
+    return cams
+
+
 def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
              scenario: Scenario | str = "nominal", finish_cam: bool = True,
-             record: bool = False, on_frame=None) -> RaceReport:
+             record: bool = False, on_frame=None, view: str | None = None) -> RaceReport:
     sc = SCENARIOS[scenario] if isinstance(scenario, str) else scenario
     cfg = sc.race
     marbles = DEFAULT_MARBLES
@@ -120,11 +147,8 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
         sim = RaceSimulator.scripted(track, marbles, cfg, *sc.script(track, cfg, np.random.default_rng(seed)))
     else:
         sim = RaceSimulator(track, marbles, cfg, seed=seed)
-    cams = (single_camera_rig(track, cfg, seed) if mode == "single"
-            else multi_camera_rig(track, cfg, seed=seed, fps=fps, overlap=sc.overlap))
+    cams = build_cameras(mode, track, cfg, seed, fps, sc.overlap, view, finish_cam)
     s_finish = L - cfg.finish_before_end
-    if finish_cam:
-        cams.append(finish_camera(track, cfg, s_finish, seed))
     bias_rng = np.random.default_rng(seed + 11)
     detectors = {c.cam_id: ColorDetector(c.calibration(marbles, sim, s_bias=float(bias_rng.normal(0, sc.calib_bias))))
                  for c in cams}
@@ -151,11 +175,43 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
                "order": [], "cams": []} if record else None)
     cam_index = {c.cam_id: k for k, c in enumerate(cams)}
 
+    truth_hist = []  # (t, truth) of recent evaluations, for the display-latency budget
+    prev_order = None
+    ok_lat_instants = phantom = shown = 0
+    latency_budget = 0.1
+
+    def ahead(i, j, truth):
+        """Is i genuinely ahead of j (or level within the tie tolerance)?"""
+        fi, fj = truth_finish[i], truth_finish[j]
+        if np.isfinite(fi) and np.isfinite(fj) and truth[i] >= cfg_finish and truth[j] >= cfg_finish:
+            return fi <= fj
+        return truth[i] >= truth[j] - tie
+
+    cfg_finish = L - cfg.finish_before_end
+
     def evaluate(t):
         nonlocal ok_instants, ok_all_instants, total_instants, sq_err, n_err, id_errors
+        nonlocal ok_lat_instants, phantom, shown, prev_order
         board = engine.leaderboard(t)
         truth = sim.progress(t)
+        truth_hist.append((t, truth))
+        while truth_hist and truth_hist[0][0] < t - latency_budget - 1e-9:
+            truth_hist.pop(0)
+        # Phantom overtakes: every displayed pass must match the track at that moment
+        # (or within the display budget).
+        order = [ids.index(e.marble_id) for e in board]
+        status_now = {ids.index(e.marble_id): e.status for e in board}
+        if prev_order is not None:
+            pos0 = {m: k for k, m in enumerate(prev_order)}
+            for k, x in enumerate(order):
+                for y in order[k + 1:]:
+                    if pos0[x] > pos0[y] and "unseen" not in (status_now[x], status_now[y]):
+                        shown += 1
+                        if not any(ahead(x, y, tr) for _, tr in truth_hist):
+                            phantom += 1
+        prev_order = order
         ok = ok_all = True
+        ok_lat = True
         seen = [e for e in board if e.status in ("finished", "tracking")]
         for pairs, visible_only in ((zip(seen, seen[1:]), True), (zip(board, board[1:]), False)):
             for a, b in pairs:
@@ -169,11 +225,18 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
                 else:
                     good = truth[ia] >= truth[ib] - tie
                 if visible_only:
+                    if not good and _DEBUG:
+                        print(f"[rank] t={t:.3f} {a.marble_id}({a.status}) ahead of {b.marble_id}({b.status}) "
+                              f"truth {truth[ia]:.3f} vs {truth[ib]:.3f}")
                     ok &= good
+                    if not good and not (a.status == "finished" and b.status == "finished"):
+                        good = any(ahead(ia, ib, tr) for _, tr in truth_hist)
+                    ok_lat &= good
                 else:
                     ok_all &= good
         ok_instants += ok
         ok_all_instants += ok_all
+        ok_lat_instants += ok_lat
         total_instants += 1
         for e in board:
             if e.status == "tracking":
@@ -252,6 +315,7 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
             tunnels=list(cfg.tunnels),
             cam_ranges=[list(c.s_range) for c in cams],
             cam_footprints=[c.footprint() for c in cams],
+            cam_positions=[[round(float(v), 4) for v in c.position] if hasattr(c, "position") else None for c in cams],
             marble_radius=cfg.marble_radius,
             track_width=cfg.track_width,
             table=[cfg.width, cfg.height],
@@ -266,11 +330,15 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
     return RaceReport(
         scenario=sc.name,
         mode=mode,
+        view=view or ("topdown" if mode == "single" else "angled"),
         seed=seed,
         n_cameras=len(cams),
         frames=n_det,
         rank_accuracy=ok_instants / max(1, total_instants),
         rank_accuracy_all=ok_all_instants / max(1, total_instants),
+        rank_accuracy_latency=ok_lat_instants / max(1, total_instants),
+        phantom_overtakes=phantom,
+        overtakes_shown=shown,
         final_order_correct=official_ok,
         final_order_strict=[e.marble_id for e in board] == truth_order,
         photo_finishes=sum(e.photo_finish for e in board),

@@ -79,7 +79,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .tower .gap, .tower .truth { font: 12px var(--mono); color: var(--muted); text-align: right; }
 .chip { font: 500 10px var(--mono); padding: 1px 5px; border-radius: 3px; letter-spacing: .04em; text-transform: uppercase; border: 1px solid currentColor; }
 .chip.tracking { color: var(--ok); } .chip.coasting { color: var(--warn); } .chip.lost { color: var(--bad); }
-.chip.finished { color: var(--amber); } .chip.photo { color: var(--bad); } .chip.unseen { color: var(--muted); }
+.chip.finished { color: var(--amber); } .chip.photo { color: var(--bad); } .chip.unseen, .chip.acquiring { color: var(--muted); }
 .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
 .steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; counter-increment: st; }
 .steps li::before { content: counter(st); font: 700 13px var(--display); color: var(--bg); background: var(--cyan); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }

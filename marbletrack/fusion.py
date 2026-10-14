@@ -31,7 +31,7 @@ class MarbleState:
     finish_sigma: float = 0.0  # 1-sigma uncertainty of finish_time (s)
     finish_final: bool = False  # provisional until the refinement window has passed
     finish_pending_until: float = 0.0
-    history: deque = field(default_factory=lambda: deque(maxlen=48))  # raw (t, s, var_px)
+    history: deque = field(default_factory=lambda: deque(maxlen=48))  # raw (t, s, var_px, var_bias)
     maneuver_until: float = -1.0  # boosted process noise after a surprising measurement
     placed: bool = False  # inserted into the leaderboard order
     n_obs: int = 0
@@ -47,7 +47,7 @@ class LeaderboardEntry:
     marble_id: str
     progress_m: float
     speed_mps: float
-    status: str  # finished | tracking | coasting | lost | unseen
+    status: str  # finished | tracking | acquiring | coasting | lost | unseen
     finish_time: float | None
     gap_m: float  # distance behind the leader (0 for finished marbles)
     photo_finish: bool = False  # finish within timing resolution of a neighbour: needs review
@@ -222,9 +222,12 @@ class FusionEngine:
         return H, s - H @ m.x, S
 
     def _update(self, m: MarbleState, t: float, s: float, r: float, r_px: float = 0.0,
-                cam_id: str | None = None) -> None:
+                r_bias: float = 0.0, cam_id: str | None = None) -> None:
         if not m.initialized:
-            m.x = np.array([s, 0.0])
+            # Cold start: borrow the field's median speed so a marble first seen just
+            # before a blind zone is predicted sensibly; its velocity variance stays wide.
+            speeds = [o.x[1] for o in self.marbles if o.initialized and o.n_obs >= 3 and o.finish_time is None]
+            m.x = np.array([s, float(np.median(speeds)) if speeds else 0.0])
             m.P = np.diag([r, 1.0])
             m.t = t
         else:
@@ -237,7 +240,7 @@ class FusionEngine:
             K = m.P @ H / S
             m.x = m.x + K * y
             m.P = (np.eye(2) - np.outer(K, H)) @ m.P
-        m.history.append((t, s, max(r_px, 1e-10)))
+        m.history.append((t, s, max(r_px - r_bias, 1e-10), r_bias))
         if m.last_obs_t is not None and t <= m.last_obs_t:
             m.n_obs += 1
             return  # late measurement: improves the state, but is not the newest observation
@@ -246,7 +249,10 @@ class FusionEngine:
             f = (self.s_finish - m.last_obs_s) / (s - m.last_obs_s)
             m.finish_time = m.last_obs_t + f * (t - m.last_obs_t)
             speed = (s - m.last_obs_s) / max(t - m.last_obs_t, 1e-6)
-            m.finish_sigma = float(np.sqrt((1 - f) ** 2 * m.last_obs_r_px + f**2 * r_px) / speed)
+            # Provisional (two-frame) time: claim no better than half the frame gap;
+            # close finishers stay flagged until the least-squares fit confirms them.
+            m.finish_sigma = max(float(np.sqrt((1 - f) ** 2 * m.last_obs_r_px + f**2 * r_px) / speed),
+                                 0.5 * (t - m.last_obs_t))
             m.finish_pending_until = m.finish_time + self.finish_window
             self.events.append(RaceEvent(t, "finish", m.marble_id, f"{m.finish_time:.4f}"))
         m.last_obs_t, m.last_obs_s, m.last_obs_v, m.last_obs_r_px = t, s, float(m.x[1]), r_px
@@ -268,7 +274,7 @@ class FusionEngine:
         pts = sorted(p for p in m.history if abs(p[0] - t0) <= self.finish_window)
         if len(pts) < 4 or pts[0][0] > t0 or pts[-1][0] < t0:
             return
-        t, s, var = (np.array(c) for c in zip(*pts))
+        t, s, var, bias = (np.array(c) for c in zip(*pts))
         dt = t - t0
         deg = 2 if len(pts) >= 6 else 1
         X = np.vander(dt, deg + 1, increasing=True)
@@ -295,7 +301,9 @@ class FusionEngine:
         dg = beta[1] + (2 * beta[2] * tau if deg == 2 else 0.0)
         J = -np.array([tau**k for k in range(deg + 1)]) / dg
         m.finish_time = t0 + float(tau)
-        m.finish_sigma = float(np.sqrt(J @ cov @ J))
+        # Independent pixel noise averages down in the fit; an occlusion bias is the
+        # same in consecutive frames and does not, so it is added back in full.
+        m.finish_sigma = float(np.sqrt(J @ cov @ J + float(np.mean(bias)) / dg**2))
         self.events.append(RaceEvent(self.now, "finish_confirmed", m.marble_id,
                                      f"{m.finish_time:.5f} +/- {m.finish_sigma * 1e3:.2f} ms"))
 
@@ -303,6 +311,11 @@ class FusionEngine:
         for m in self.marbles:
             if m.finish_time is not None and not m.finish_final and self.now >= m.finish_pending_until:
                 self._refine_finish(m)
+
+    @staticmethod
+    def _bias(det: Detection, cand) -> float:
+        """Variance share caused by partial occlusion (correlated between frames)."""
+        return (max(0.0, det.sigma_px - 1.0) * cand.s_per_unit) ** 2
 
     def _r(self, det: Detection, cand) -> float:
         # Pixel noise alone understates the error: overlapping cameras disagree
@@ -361,7 +374,7 @@ class FusionEngine:
                 if not m.initialized:
                     cand = det.candidates[0]
                     cost[i, j] = c_color
-                    choice[i, j] = (cand.s, self._r(det, cand), det.sigma_s(cand) ** 2)
+                    choice[i, j] = (cand.s, self._r(det, cand), det.sigma_s(cand) ** 2, self._bias(det, cand))
                     continue
                 best = None
                 for cand in det.candidates:  # >1 only where the track overlaps itself
@@ -369,7 +382,7 @@ class FusionEngine:
                     _, y, S = self._innovation(m, t, cand.s, r)
                     md = y**2 / S
                     if best is None or md < best[0]:
-                        best = (md, cand.s, r, det.sigma_s(cand) ** 2)
+                        best = (md, cand.s, r, det.sigma_s(cand) ** 2, self._bias(det, cand))
                 if best[0] <= self.motion_gate:
                     cost[i, j] = c_color + best[0]
                     choice[i, j] = best[1:]
@@ -395,6 +408,8 @@ class FusionEngine:
         if not m.initialized:
             return "unseen"
         age = now - m.last_obs_t
+        if m.n_obs < 3 and age <= self.tracking_timeout:
+            return "acquiring"  # too few observations for a reliable speed
         if age <= self.tracking_timeout:
             return "tracking"
         return "coasting" if age <= self.lost_after else "lost"

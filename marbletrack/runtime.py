@@ -20,8 +20,8 @@ import numpy as np
 
 from .detector import ColorDetector
 from .fusion import FusionEngine, ReorderBuffer
-from .race import SCENARIOS
-from .sim import DEFAULT_MARBLES, RaceSimulator, finish_camera, multi_camera_rig, serpentine_track, single_camera_rig
+from .race import SCENARIOS, build_cameras
+from .sim import DEFAULT_MARBLES, RaceSimulator, serpentine_track
 
 
 def build_world(mode: str, scenario: str, seed: int, fps: float, finish_cam: bool):
@@ -29,10 +29,8 @@ def build_world(mode: str, scenario: str, seed: int, fps: float, finish_cam: boo
     cfg = SCENARIOS[scenario].race
     track = serpentine_track(cfg)
     sim = RaceSimulator(track, DEFAULT_MARBLES, cfg, seed=seed)
-    cams = single_camera_rig(track, cfg, seed) if mode == "single" else multi_camera_rig(track, cfg, seed=seed, fps=fps)
+    cams = build_cameras(mode, track, cfg, seed, fps, finish_cam=finish_cam)
     s_finish = track.s_range[1] - cfg.finish_before_end
-    if finish_cam:
-        cams.append(finish_camera(track, cfg, s_finish, seed))
     return cfg, track, sim, cams, s_finish
 
 

@@ -20,9 +20,17 @@ class CameraCalibration:
     centerline: Polyline  # image-space centerline, vertices carry global s (metres)
     track_mask: np.ndarray  # uint8 mask of the track surface this camera owns
     marble_radius_px: float
-    max_lateral_px: float  # reject blobs farther than this from the centerline
+    max_lateral_px: float  # reject blobs farther than this from the centerline (px, or m with normals)
     background: np.ndarray | None = None  # BGR median of empty-track frames
     palette: list[ColorModel] = field(default_factory=list)  # one per marble, global order
+    # Optional for perspective cameras: expected full-marble blob area (px) along the section.
+    area_s: np.ndarray | None = None
+    area_px: np.ndarray | None = None
+
+    def expected_area(self, s: float) -> float:
+        if self.area_s is None:
+            return float(np.pi * self.marble_radius_px**2)
+        return float(np.interp(s, self.area_s, self.area_px))
 
     @property
     def s_range(self) -> tuple[float, float]:
@@ -83,8 +91,8 @@ class ColorDetector:
         self.calib = calib
         self.fg_threshold = fg_threshold
         self.pixel_gate = pixel_gate
-        self.full_area = 0.85 * np.pi * calib.marble_radius_px**2  # highlight pixels go unclassified
-        self.min_area = max(4, min_area_frac * np.pi * calib.marble_radius_px**2)
+        self.min_area_frac = min_area_frac
+        self.min_area = max(4, min_area_frac * np.pi * calib.marble_radius_px**2)  # prefilter (smallest marble)
         self.fg_scale = fg_scale
         self.adapt = adapt
         self.bg_alpha, self.bg_every, self.color_alpha = bg_alpha, bg_every, color_alpha
@@ -92,29 +100,56 @@ class ColorDetector:
         self.background = calib.background.copy()
         self._bg_f = calib.background.astype(np.float32)
         self.palette = copy.deepcopy(calib.palette)
-        self._roi = calib.track_mask
+        # Foreground is searched in a slightly widened region so that a marble which
+        # straddles the edge of this camera's section is seen whole; such blobs are
+        # then rejected by the completeness test in detect().
+        grow = int(2 * np.sqrt(max(calib.expected_area(s) for s in np.linspace(*calib.s_range, 9)) / np.pi)) + 3
+        self._roi = cv2.dilate(calib.track_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow + 1,) * 2))
+        self.min_inside = 0.85
         if fg_scale != 1.0:
             h, w = calib.track_mask.shape
             self._small = (int(w * fg_scale), int(h * fg_scale))
-            self._roi_small = cv2.resize(calib.track_mask, self._small, interpolation=cv2.INTER_NEAREST)
+            self._roi_small = cv2.resize(self._roi, self._small, interpolation=cv2.INTER_NEAREST)
             self._bg_small = cv2.resize(self.background, self._small, interpolation=cv2.INTER_AREA)
         self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self._frames = 0
+        # Pixels used to measure global illumination: a fixed sample of the track area.
+        ys, xs = np.nonzero(calib.track_mask)
+        pick = np.random.default_rng(0).choice(len(ys), size=min(1500, len(ys)), replace=False)
+        self._probe = (ys[pick], xs[pick])
+        self.gain = np.ones(3, np.float32)
 
     def _inside_coverage(self, c: Projection) -> bool:
         # A blob within one radius of the end of this camera's section is cut off
         # by the mask and its centroid is biased; the neighbouring camera (overlap)
         # sees it whole.
         lo, hi = self.calib.s_range
-        r = self.calib.marble_radius_px * c.s_per_unit
+        r = np.sqrt(self.calib.expected_area(c.s) / np.pi) * c.s_per_unit
         return lo + r <= c.s <= hi - r
+
+    def _measure_gain(self, frame: np.ndarray) -> np.ndarray:
+        """Per-channel illumination ratio frame/background (median over track pixels).
+
+        Marbles cover a small share of the probe pixels, so the median ignores
+        them. Without this, a global dimming makes static walls and track edges
+        differ from the stored background and appear as foreground clutter.
+        """
+        f = frame[self._probe].astype(np.float32) + 1.0
+        b = self.background[self._probe].astype(np.float32) + 1.0
+        g = np.median(f / b, axis=0)
+        return np.clip(g, 0.3, 3.0).astype(np.float32)
+
+    def _scaled(self, bg: np.ndarray) -> np.ndarray:
+        if np.all(np.abs(self.gain - 1.0) < 0.02):
+            return bg
+        return cv2.convertScaleAbs(bg.astype(np.float32) * self.gain)
 
     def foreground(self, frame: np.ndarray) -> np.ndarray:
         if self.fg_scale == 1.0:
-            return foreground_mask(frame, self.background, self.fg_threshold, self._roi, self._kernel)
+            return foreground_mask(frame, self._scaled(self.background), self.fg_threshold, self._roi, self._kernel)
         # Large sensors: find marbles on a downscaled frame, classify at full resolution.
         small = cv2.resize(frame, self._small, interpolation=cv2.INTER_AREA)
-        fg = foreground_mask(small, self._bg_small, self.fg_threshold, self._roi_small)
+        fg = foreground_mask(small, self._scaled(self._bg_small), self.fg_threshold, self._roi_small)
         return cv2.resize(fg, frame.shape[1::-1], interpolation=cv2.INTER_NEAREST)
 
     def _adapt_background(self, frame: np.ndarray, fg: np.ndarray) -> None:
@@ -125,6 +160,7 @@ class ColorDetector:
             self._bg_small = cv2.resize(self.background, self._small, interpolation=cv2.INTER_AREA)
 
     def detect(self, frame: np.ndarray, t: float) -> list[Detection]:
+        self.gain = self._measure_gain(frame)
         fg = self.foreground(frame)
         self._frames += 1
         if self.adapt and self._frames % self.bg_every == 0:
@@ -133,7 +169,8 @@ class ColorDetector:
         if n_comp <= 1:
             return []
         xs, ys = cv2.findNonZero(fg).reshape(-1, 2).T
-        lab = bgr_to_lab(frame[ys, xs])
+        # Colour constancy: undo the global illumination change before matching colours.
+        lab = bgr_to_lab(np.clip(frame[ys, xs] / self.gain, 0, 255))
         d2 = d2_matrix(self.palette, lab)
         cls = d2.argmin(axis=1)
         ok = d2[np.arange(len(cls)), cls] < self.pixel_gate
@@ -145,12 +182,18 @@ class ColorDetector:
         key = comp[ys, xs].astype(np.int64) * n_cls + cls
         groups, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
         dets = []
+        inside = np.bincount(inverse, weights=(self.calib.track_mask[ys, xs] > 0).astype(float), minlength=len(groups))
         for g in np.flatnonzero(counts >= self.min_area):
+            if inside[g] < self.min_inside * counts[g]:
+                continue  # cut by the section edge or belongs to neighbouring track
             sel = inverse == g
             xy = np.array([xs[sel].mean(), ys[sel].mean()])
             cands = [c for c in self.calib.centerline.project(xy, self.calib.max_lateral_px)
                      if self._inside_coverage(c)]
             if not cands:
+                continue
+            full = 0.85 * self.calib.expected_area(cands[0].s)  # highlight pixels go unclassified
+            if counts[g] < self.min_area_frac * full / 0.85:
                 continue
             median_lab = np.median(lab[sel], axis=0)
             color_d2 = d2_matrix(self.palette, median_lab)[0]
@@ -165,7 +208,7 @@ class ColorDetector:
                     color_d2=color_d2,
                     candidates=cands,
                     # A partly hidden marble's visible centroid shifts by up to ~r/2.
-                    sigma_px=1.0 + 0.5 * self.calib.marble_radius_px * max(0.0, 1.0 - counts[g] / self.full_area),
+                    sigma_px=1.0 + 0.5 * np.sqrt(full / 0.85 / np.pi) * max(0.0, 1.0 - counts[g] / full),
                 )
             )
         return dets

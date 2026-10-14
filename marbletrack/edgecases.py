@@ -230,7 +230,9 @@ SCORERS = {"photo_finish": score_photo_finish, "corner_duel": score_corner_duel,
 
 def run_edge_case(name: str, mode: str = "multi", seed: int = 0) -> dict:
     r = run_race(mode, seed=seed, scenario=EDGE_CASES[name], record=True)
-    out = {"case": name, "mode": mode, "seed": seed, "rank_accuracy": r.rank_accuracy,
+    out = {"case": name, "mode": mode, "seed": seed, "view": r.view, "rank_accuracy": r.rank_accuracy,
+           "rank_accuracy_latency": r.rank_accuracy_latency, "phantom_overtakes": r.phantom_overtakes,
+           "overtakes_shown": r.overtakes_shown,
            "id_errors": r.id_errors, "pos_err_cm_rms": r.pos_err_cm_rms,
            "final_order_correct": r.final_order_correct}
     out.update(SCORERS[name](r))

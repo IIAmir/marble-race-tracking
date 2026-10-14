@@ -242,7 +242,11 @@ class SimCamera:
         calibration that disagrees with its neighbours.
         """
         line = self.track.section(*self.s_range)
-        img_line = Polyline(_apply_h(self.H, line.points), line.s + s_bias)
+        _, tan_l = self.track.point_at(line.s)
+        nrm_l = np.c_[-tan_l[:, 1], tan_l[:, 0]]
+        img_pts = _apply_h(self.H, line.points)
+        normals = (_apply_h(self.H, line.points + 0.01 * nrm_l) - img_pts) / 0.01  # px per metre cross-track
+        img_line = Polyline(img_pts, line.s + s_bias, normals=normals)
         mid = line.points[len(line.points) // 2]
         scale = self.scale_at(mid)
         mask = np.zeros(self.size[::-1], np.uint8)
@@ -255,7 +259,7 @@ class SimCamera:
             centerline=img_line,
             track_mask=mask,
             marble_radius_px=self.cfg.marble_radius * scale,
-            max_lateral_px=0.6 * self.cfg.track_width * scale,
+            max_lateral_px=0.6 * self.cfg.track_width,  # metres (oblique projection)
             background=bg,
         )
         # Colour calibration: each marble is rolled through the view alone and the
