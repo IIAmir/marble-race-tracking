@@ -1,0 +1,1376 @@
+<title>Marble Race Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: race-control console. Live 3D track (with camera feeds strip, minimap and view tools)
+   on the left; timing tower, telemetry, tracker health and race log on the right; race setup on
+   top; clock, replay and fault injection along the bottom. Deliberately one dark look. */
+:root {
+  --bg: #0e131a; --panel: #151c26; --panel-2: #1b2430; --line: #29333f;
+  --fg: #e6e9ee; --muted: #8b97a7; --amber: #f2a93b; --cyan: #6cc4d8;
+  --ok: #6fcf8e; --warn: #f2a93b; --bad: #ef6b5e;
+  --display: "Saira Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font: 14px var(--body); }
+.app { height: 100%; box-sizing: border-box; display: grid; gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "top top" "view side" "bottom side";
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.top, .bottom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; }
+.top { grid-area: top; } .bottom { grid-area: bottom; }
+.brand { font: 700 19px var(--display); letter-spacing: .02em; margin-right: 6px; white-space: nowrap; }
+.brand span { color: var(--amber); }
+label.f { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+select, button { font: 500 13px var(--body); color: var(--fg); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 9px; }
+button { cursor: pointer; }
+button:hover, select:hover { border-color: var(--muted); }
+button.primary { background: var(--amber); color: #111; border-color: var(--amber); font-weight: 600; }
+button.on { border-color: var(--amber); color: var(--amber); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.sep { width: 1px; height: 22px; background: var(--line); }
+.view { grid-area: view; position: relative; min-height: 340px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #0a0e13; }
+.view canvas.gl { display: block; position: absolute; inset: 0; }
+#feedOverlay, #labels { position: absolute; inset: 0; pointer-events: none; }
+#labels { z-index: 1; } #feedOverlay { z-index: 2; }
+.tools { position: absolute; left: 8px; top: 8px; display: flex; flex-wrap: wrap; gap: 4px; max-width: calc(100% - 250px); z-index: 3; }
+.tools button { padding: 4px 8px; font-size: 12px; background: rgba(21,28,38,.9); }
+.zoom { position: absolute; left: 8px; top: 44px; display: flex; flex-direction: column; gap: 4px; z-index: 3; align-items: center; }
+.zoom button { width: 30px; height: 30px; padding: 0; font: 600 16px var(--mono); background: rgba(21,28,38,.9); }
+.zoom input { writing-mode: vertical-lr; direction: rtl; height: 110px; accent-color: var(--amber); }
+#minimap { position: absolute; right: 8px; top: 8px; width: 230px; height: 170px; background: rgba(10,14,19,.86); border: 1px solid var(--line); border-radius: 5px; z-index: 3; cursor: crosshair; }
+.lights { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); display: flex; gap: 12px; padding: 12px 16px; background: rgba(10,14,19,.85); border-radius: 10px; z-index: 5; }
+.lights i { width: 34px; height: 34px; border-radius: 50%; background: #2a1414; box-shadow: inset 0 0 0 2px #3a2020; }
+.lights i.on { background: #ff3b30; box-shadow: 0 0 18px #ff3b30; }
+.banner { position: absolute; left: 50%; top: 14%; transform: translateX(-50%); z-index: 5; text-align: center; background: rgba(10,14,19,.9); border: 1px solid var(--line); border-radius: 10px; padding: 14px 22px; min-width: 260px; }
+.banner h3 { margin: 0 0 6px; font: 700 22px var(--display); color: var(--amber); }
+.banner ol { margin: 0; padding-left: 20px; text-align: left; font: 13px var(--mono); }
+.hint { position: absolute; left: 8px; bottom: 8px; font: 11px var(--mono); color: var(--muted); background: rgba(10,14,19,.8); padding: 3px 7px; border-radius: 4px; z-index: 3; }
+.lbl { font: 500 11px/1.2 var(--mono); color: var(--fg); background: rgba(14,19,26,.8); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.lbl.sel { border-color: var(--amber); color: var(--amber); }
+.lbl.hide { visibility: hidden !important; }
+.lbl.cam { color: var(--muted); font-size: 10px; } .lbl.cam.off { color: var(--bad); border-color: var(--bad); }
+.lbl.map { color: var(--cyan); border-color: rgba(108,196,216,.35); }
+.side { grid-area: side; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; min-width: 0; }
+.card h2 { margin: 0 0 6px; font: 600 12.5px var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.card h2 b { color: var(--fg); letter-spacing: .02em; text-transform: none; font-weight: 600; }
+table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tower td { padding: 2px 4px; border-top: 1px solid var(--line); font-size: 12.5px; white-space: nowrap; }
+.tower tr { cursor: pointer; } .tower tr:hover td { background: var(--panel-2); } .tower tr.sel td { background: rgba(242,169,59,.12); }
+.tower .pos { font: 700 14px var(--display); text-align: right; width: 20px; }
+.tower .dot i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: middle; box-shadow: inset 0 0 0 1px rgba(255,255,255,.3); }
+.tower .num { font: 11.5px var(--mono); color: var(--muted); text-align: right; }
+.chip { font: 500 9.5px var(--mono); padding: 0 4px; border-radius: 3px; text-transform: uppercase; border: 1px solid currentColor; letter-spacing: .03em; }
+.chip.tracking { color: var(--ok); } .chip.coasting { color: var(--warn); } .chip.lost { color: var(--bad); } .chip.photo { color: var(--bad); }
+.chip.finished { color: var(--amber); } .chip.unseen, .chip.acquiring, .chip.grid { color: var(--muted); }
+.kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.kv div { background: var(--panel-2); border-radius: 4px; padding: 4px 6px; min-width: 0; }
+.kv span { display: block; font: 9.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kv strong { font: 600 14px var(--display); font-variant-numeric: tabular-nums; }
+.camgrid { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.camgrid i { width: 18px; height: 12px; border-radius: 2px; background: var(--ok); opacity: .85; cursor: pointer; }
+.camgrid i.off { background: var(--bad); }
+#spark { width: 100%; height: 60px; display: block; margin-top: 6px; }
+.log { font: 11.5px var(--mono); color: var(--muted); display: grid; gap: 2px; max-height: 150px; overflow: auto; }
+.log .bad { color: var(--bad); } .log .ok { color: var(--ok); } .log .amb { color: var(--amber); }
+.clock { font: 600 16px var(--mono); color: var(--amber); min-width: 86px; font-variant-numeric: tabular-nums; }
+#scrub { flex: 1 1 160px; min-width: 120px; accent-color: var(--amber); }
+.toggles { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.toggles label { font-size: 12px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; }
+.toggles input { accent-color: var(--amber); }
+.muted { color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) {
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "view" "bottom" "side"; }
+  .view { height: 62vh; } .side { overflow: visible; } #minimap { width: 150px; height: 112px; }
+  .tools { max-width: calc(100% - 170px); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <div class="top">
+    <div class="brand">Marble Race <span>Simulator</span></div>
+    <label class="f">Map <select id="map"></select></label>
+    <label class="f">Marbles <select id="count"><option>6</option><option>8</option><option selected>10</option><option>12</option><option>16</option></select></label>
+    <label class="f">Laps <select id="laps"><option>1</option><option>2</option><option selected>3</option><option>5</option></select></label>
+    <label class="f">Chaos <select id="chaos"><option value="0.1">Calm</option><option value="0.35" selected>Normal</option><option value="0.55">Wild</option></select></label>
+    <label class="f">Cameras <select id="rig"><option value="angled">14 angled cams</option><option value="overhead">1 overhead cam</option><option value="hybrid">Both</option></select></label>
+    <span class="sep"></span>
+    <button id="newRace" class="primary" type="button" title="New race (N)">New race</button>
+    <button id="restart" type="button" title="Restart same race (R)">Restart</button>
+    <button id="play" type="button" title="Pause / resume (Space)">Pause</button>
+    <label class="f">Speed <select id="speed"><option value="0.1">0.1× slow-mo</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+  </div>
+
+  <div class="view" id="view">
+    <div id="labels"></div>
+    <canvas id="feedOverlay"></canvas>
+    <div class="tools" id="tools">
+      <button data-view="orbit" type="button" title="Free camera: drag to orbit, right-drag to pan, wheel to zoom">Free</button>
+      <button data-view="leader" type="button">Follow leader</button>
+      <button data-view="selected" type="button" title="F">Follow selected</button>
+      <button data-view="tv" type="button" title="Director cuts between rig cameras">TV director</button>
+      <button data-view="overhead" type="button">Overhead</button>
+      <button data-view="finish" type="button">Finish cam</button>
+      <button id="fit" type="button">Fit track</button>
+    </div>
+    <div class="zoom"><button id="zin" type="button" title="Zoom in (+)">+</button><input id="zoom" type="range" min="-100" max="100" value="0" aria-label="Zoom"><button id="zout" type="button" title="Zoom out (−)">−</button></div>
+    <canvas id="minimap" width="460" height="340" title="Minimap: click to look there"></canvas>
+    <div class="lights" id="lights" hidden><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="hint" id="hint">wheel: zoom · drag: orbit · right-drag: pan · double-click: focus · click marble: select</div>
+  </div>
+
+  <div class="bottom">
+    <span class="clock" id="clock">0.00 s</span>
+    <button id="replay" type="button" title="Instant replay of the last 30 s">Instant replay</button>
+    <input id="scrub" type="range" min="0" max="0" value="0" disabled aria-label="Replay position">
+    <span class="sep"></span>
+    <div class="toggles">
+      <label><input type="checkbox" id="tLabels" checked> Labels</label>
+      <label><input type="checkbox" id="tBoxes" checked> Tracker boxes</label>
+      <label><input type="checkbox" id="tTrails" checked> Trails</label>
+      <label><input type="checkbox" id="tFrustums"> Camera frustums</label>
+      <label><input type="checkbox" id="tFeeds" checked> Camera feeds</label>
+      <label><input type="checkbox" id="tMinimap" checked> Minimap</label>
+      <label><input type="checkbox" id="tWaypoints"> Centerline</label>
+      <label>Marble size <select id="mscale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></label>
+    </div>
+    <span class="sep"></span>
+    <label class="f">Faults</label>
+    <button id="fCam" type="button" title="Kill the camera watching the leader">Kill camera</button>
+    <button id="fLight" type="button">Dim lights</button>
+    <button id="fNet" type="button">Network jitter</button>
+    <button id="fReset" type="button">Clear faults</button>
+  </div>
+
+  <aside class="side">
+    <section class="card">
+      <h2>Timing tower <b id="towerNote"></b></h2>
+      <table class="tower" id="tower"></table>
+    </section>
+    <section class="card">
+      <h2>Telemetry <b id="selName">—</b></h2>
+      <div class="kv" id="tele"></div>
+      <canvas id="spark" width="660" height="120"></canvas>
+      <div class="muted" id="teleNote"></div>
+    </section>
+    <section class="card">
+      <h2>Tracker vs truth <b id="rigName"></b></h2>
+      <div class="kv" id="health"></div>
+      <div class="camgrid" id="camgrid" title="Click a camera to kill or restore it"></div>
+    </section>
+    <section class="card">
+      <h2>Race control</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const V3 = THREE.Vector3, UP = new V3(0, 1, 0);
+const TRACK_W = 0.055, WALL_H = 0.016, G = 9.81;
+
+// ============================================================ random
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+// Physics has its own seeded stream (so "Restart" replays the same race); sensor noise does not.
+let rnd = mulberry32(1);
+const gaussOf = (r) => () => { let u = 0, v = 0; while (!u) u = r(); while (!v) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const gauss = gaussOf(Math.random);
+let pgauss = gaussOf(rnd);
+
+// ============================================================ marbles & colour
+const PALETTE = [
+  ["Ruby", "#d02a33"], ["Amber", "#f5821f"], ["Sun", "#f0d22c"], ["Leaf", "#2fa84f"], ["Teal", "#1fb5be"], ["Sky", "#3c96eb"],
+  ["Navy", "#1f2f96"], ["Fuchsia", "#ff00ff"], ["Rose", "#f052a8"], ["Snow", "#f2f2f2"], ["Onyx", "#2b2b2e"], ["Lime", "#a8e03c"],
+  ["Cobalt", "#0000ff"], ["Mint", "#9ff0cf"], ["Plum", "#6b2350"], ["Bronze", "#a8692e"],
+];
+function hexToLab(hex) {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92));
+  const X = (0.4124 * c[0] + 0.3576 * c[1] + 0.1805 * c[2]) / 0.95047, Y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], Z = (0.0193 * c[0] + 0.1192 * c[1] + 0.9505 * c[2]) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  return [116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
+}
+const LAB = PALETTE.map(([, h]) => hexToLab(h));
+
+// ============================================================ maps
+function serpentine() {
+  const pts = [], rows = 5, pitch = 0.4, R = pitch / 2, x0 = -1.1, x1 = 1.1;
+  for (let r = 0; r < rows; r++) {
+    const z = -0.8 + r * pitch, xs = r % 2 ? [x1, x0] : [x0, x1];
+    for (let k = 0; k <= 8; k++) pts.push([xs[0] + (xs[1] - xs[0]) * k / 8, z]);
+    if (r < rows - 1) { const sg = r % 2 ? -1 : 1; for (let k = 1; k < 12; k++) { const a = -Math.PI / 2 + Math.PI * k / 12; pts.push([xs[1] + sg * R * Math.cos(a), z + R + R * Math.sin(a)]); } }
+  }
+  return { pts: pts.map(([x, z]) => [x, 0, z]), heights: [0.95, 0.25], closed: false, tunnels: [[0.27, 0.31]], finishBack: 0.45 };
+}
+function alpine() {
+  const pts = [], rows = 6, R = 0.27;
+  for (let r = 0; r < rows; r++) {
+    const z = -1.35 + r * 2 * R, dir = r % 2 ? -1 : 1, xa = -1.9 * dir, xb = 1.9 * dir;
+    for (let k = 0; k <= 16; k++) { const u = k / 16; pts.push([xa + (xb - xa) * u, z + 0.09 * Math.sin(u * Math.PI * 3) * (r % 3 === 1 ? 1 : 0.4)]); }
+    if (r < rows - 1) for (let k = 1; k < 12; k++) { const a = -Math.PI / 2 + Math.PI * k / 12; pts.push([xb + dir * 0.0 + dir * R * Math.cos(a), z + R + R * Math.sin(a)]); }
+  }
+  return { pts: pts.map(([x, z]) => [x, 0, z]), heights: [2.3, 0.2], closed: false, tunnels: [[0.18, 0.22], [0.55, 0.6], [0.82, 0.85]], finishBack: 0.45 };
+}
+function spiral() {
+  const pts = [];
+  for (let k = 0; k <= 10; k++) pts.push([-2.2 + 1.5 * k / 10, 2.75 - 0.05 * k / 10, -0.7]);
+  const turns = 4, R = 0.7, n = turns * 36;
+  for (let k = 0; k <= n; k++) { const a = -Math.PI / 2 + 2 * Math.PI * turns * k / n; pts.push([R * Math.cos(a), 2.65 - 2.15 * k / n, R * Math.sin(a)]); }
+  for (let k = 1; k <= 10; k++) pts.push([0.0 + 2.2 * k / 10, 0.48 - 0.3 * k / 10, -0.7 - 0.0 * k]);
+  return { pts, heights: null, closed: false, tunnels: [], finishBack: 0.45 };
+}
+function figure8() {
+  const pts = [], a = 2.3;
+  for (let k = 0; k < 160; k++) { const t = 2 * Math.PI * k / 160; const d = 1 + Math.sin(t) ** 2; pts.push([a * Math.cos(t) / d, 0, a * Math.sin(t) * Math.cos(t) / d * 1.25]); }
+  return { pts, closed: true, lift: [0.03, 0.2], profile: [0.12, 0.85], tunnels: [[0.6, 0.66]], startAt: 0.22 };
+}
+function grandPrix() {
+  const pts = [];
+  for (let k = 0; k < 180; k++) {
+    const t = 2 * Math.PI * k / 180;
+    const r = 2.1 + 0.42 * Math.cos(2 * t + 0.4) + 0.3 * Math.cos(3 * t + 1.9) + 0.13 * Math.cos(5 * t + 0.7) + 0.06 * Math.cos(7 * t + 2.4);
+    pts.push([1.35 * r * Math.cos(t), 0, 0.85 * r * Math.sin(t)]);
+  }
+  return { pts, closed: true, lift: [0.40, 0.55], profile: [0.12, 0.95], tunnels: [[0.78, 0.82]], startAt: 0.57 };
+}
+const MAPS = {
+  serpentine: { name: "Serpentine Table", build: serpentine, laps: false, note: "3 × 2 m table, five rows, one tunnel" },
+  alpine: { name: "Alpine Descent", build: alpine, laps: false, note: "2 m mountain drop, hairpins, three tunnels" },
+  spiral: { name: "Spiral Tower", build: spiral, laps: false, note: "four stacked spiral levels: the overhead camera cannot see the lower ones" },
+  figure8: { name: "Figure-Eight Bridge", build: figure8, laps: true, note: "lap race with a chain lift and a bridge crossing" },
+  grandprix: { name: "Grand Prix", build: grandPrix, laps: true, note: "lap race, chain lift on the back straight, tunnel" },
+};
+
+// ============================================================ track
+class Track {
+  constructor(def) {
+    this.def = def; this.closed = def.closed;
+    let pts = def.pts.map((p) => new V3(...p));
+    let curve = new THREE.CatmullRomCurve3(pts, this.closed, "centripetal", 0.5);
+    if (def.heights || def.profile) {  // assign heights along the arc length, then rebuild
+      const L0 = curve.getLength(), n = Math.max(200, Math.ceil(L0 / 0.05));
+      const sp = curve.getSpacedPoints(n);
+      const prof = (u) => {
+        if (def.heights) return def.heights[0] + (def.heights[1] - def.heights[0]) * u;
+        const [lo, hi] = def.profile, [ls, le] = def.lift;
+        if (u >= ls && u <= le) return lo + (hi - lo) * (u - ls) / (le - ls);
+        const span = 1 - (le - ls), q = ((u - le) % 1 + 1) % 1;
+        return hi - (hi - lo) * q / span;
+      };
+      pts = sp.slice(0, this.closed ? n : n + 1).map((p, i) => new V3(p.x, prof(i / n), p.z));
+      curve = new THREE.CatmullRomCurve3(pts, this.closed, "centripetal", 0.5);
+    }
+    this.curve = curve;
+    this.L = curve.getLength();
+    this.N = Math.ceil(this.L / 0.01);
+    this.ds = this.L / this.N;
+    const sp = curve.getSpacedPoints(this.N);
+    const M = this.N + 1;
+    this.px = new Float32Array(M); this.py = new Float32Array(M); this.pz = new Float32Array(M);
+    sp.forEach((p, i) => { this.px[i] = p.x; this.py[i] = p.y; this.pz[i] = p.z; });
+    this.tx = new Float32Array(M); this.ty = new Float32Array(M); this.tz = new Float32Array(M);
+    this.nx = new Float32Array(M); this.nz = new Float32Array(M); this.cn = new Float32Array(M);
+    for (let i = 0; i < M; i++) {
+      const a = this.closed ? (i - 1 + this.N) % this.N : Math.max(0, i - 1), b = this.closed ? (i + 1) % this.N : Math.min(this.N, i + 1);
+      const dx = this.px[b] - this.px[a], dy = this.py[b] - this.py[a], dz = this.pz[b] - this.pz[a], l = Math.hypot(dx, dy, dz) || 1;
+      this.tx[i] = dx / l; this.ty[i] = dy / l; this.tz[i] = dz / l;
+      const h = Math.hypot(this.tx[i], this.tz[i]) || 1;
+      this.nx[i] = -this.tz[i] / h; this.nz[i] = this.tx[i] / h;  // horizontal lateral axis (left of travel)
+    }
+    for (let i = 0; i < M; i++) {  // lateral component of the curvature vector dT/ds
+      const a = this.closed ? (i - 1 + this.N) % this.N : Math.max(0, i - 1), b = this.closed ? (i + 1) % this.N : Math.min(this.N, i + 1);
+      const span = (b - a) * this.ds || this.ds;
+      const kx = (this.tx[b] - this.tx[a]) / Math.abs(span), kz = (this.tz[b] - this.tz[a]) / Math.abs(span);
+      this.cn[i] = kx * this.nx[i] + kz * this.nz[i];
+    }
+    const frac = (f) => f * this.L;
+    this.tunnels = (def.tunnels || []).map(([a, b]) => [frac(a), frac(b)]);
+    this.lift = null;
+    if (def.lift) {
+      // The chain must cover the whole climb: extend it until the track really stops rising
+      // (re-splining the profile shifts the crest a few centimetres past the nominal end).
+      let a = frac(def.lift[0]), b = frac(def.lift[1]);
+      while (this.sample(b).ty > 0.005 && b < frac(def.lift[1]) + 1) b += 0.01;
+      while (this.sample(a - 0.01).ty > 0.005 && a > frac(def.lift[0]) - 1) a -= 0.01;
+      this.lift = [a, b + 0.03];
+    }
+    this.startS = this.closed ? frac(def.startAt) : 0.45;
+    this.finishS = this.closed ? this.startS : this.L - def.finishBack;
+    this.buildHash();
+    this.computeOverheadCover();
+  }
+  wrap(s) { return this.closed ? ((s % this.L) + this.L) % this.L : Math.max(0, Math.min(this.L, s)); }
+  idx(s) { const u = this.wrap(s) / this.ds; const i = Math.min(this.N - 1, Math.floor(u)); return [i, u - i]; }
+  sample(s) {
+    const [i, f] = this.idx(s), j = i + 1;
+    const L = (a) => a[i] + (a[j] - a[i]) * f;
+    return { x: L(this.px), y: L(this.py), z: L(this.pz), tx: this.tx[i], ty: this.ty[i], tz: this.tz[i], nx: this.nx[i], nz: this.nz[i], cn: this.cn[i] };
+  }
+  world(s, d = 0, h = 0, out = new V3()) {
+    const q = this.sample(s);
+    return out.set(q.x + d * q.nx, q.y + h, q.z + d * q.nz);
+  }
+  inTunnel(s) { const w = this.wrap(s); return this.tunnels.some(([a, b]) => w >= a && w <= b); }
+  inLift(s) { if (!this.lift) return false; const w = this.wrap(s); return w >= this.lift[0] && w <= this.lift[1]; }
+  buildHash() {  // spatial hash of centerline samples every 2 cm, for occlusion and ambiguity tests
+    this.cell = 0.06; this.hash = new Map();
+    for (let i = 0; i <= this.N; i += 2) {
+      const k = this.key(this.px[i], this.pz[i]);
+      if (!this.hash.has(k)) this.hash.set(k, []);
+      this.hash.get(k).push(i);
+    }
+  }
+  key(x, z) { return Math.floor(x / this.cell) + "," + Math.floor(z / this.cell); }
+  near(x, z) {
+    const cx = Math.floor(x / this.cell), cz = Math.floor(z / this.cell), out = [];
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const l = this.hash.get((cx + a) + "," + (cz + b)); if (l) out.push(...l); }
+    return out;
+  }
+  sDist(a, b) { const d = Math.abs(a - b); return this.closed ? Math.min(d, this.L - d) : d; }
+  // Is world point P inside the solid track channel of a section far (in s) from sOwn?
+  blocks(P, sOwn) {
+    for (const i of this.near(P.x, P.z)) {
+      if (this.sDist(i * this.ds, sOwn) < 0.25) continue;
+      const dy = P.y - this.py[i];
+      if (dy > -0.006 && dy < WALL_H && Math.hypot(P.x - this.px[i], P.z - this.pz[i]) < TRACK_W / 2 + 0.006) return true;
+    }
+    return false;
+  }
+  computeOverheadCover() {  // samples hidden from straight above by another level, and ambiguity partners
+    this.covered = new Uint8Array(this.N + 1); this.partners = new Map();
+    for (let i = 0; i <= this.N; i += 2) {
+      for (const j of this.near(this.px[i], this.pz[i])) {
+        if (this.sDist(i * this.ds, j * this.ds) < 0.3) continue;
+        if (Math.hypot(this.px[i] - this.px[j], this.pz[i] - this.pz[j]) > TRACK_W * 0.6) continue;
+        if (this.py[j] - this.py[i] > 0.035) { this.covered[i] = 1; this.covered[i + 1] = 1; }
+        if (!this.partners.has(i)) this.partners.set(i, []);
+        this.partners.get(i).push(j * this.ds);
+      }
+    }
+  }
+  coveredAbove(s) { const [i] = this.idx(s); return this.covered[i] === 1; }
+  partnersOf(s) { const [i] = this.idx(s); return this.partners.get(i - (i % 2)) || []; }
+}
+
+// ============================================================ physics
+class Physics {
+  constructor(track, count, laps, seed, chaos = 0.35) {
+    this.track = track; rnd = mulberry32(seed); pgauss = gaussOf(rnd);
+    this.laps = track.closed ? laps : 1;
+    this.raceDist = track.closed ? track.startS + this.laps * track.L : track.finishS;
+    const order = [...Array(count).keys()].sort(() => rnd() - 0.5);
+    this.m = order.map((ci, k) => {
+      const row = Math.floor(k / 2), lane = k % 2 ? -1 : 1;
+      const u = () => rnd() * 2 - 1;
+      const r = 0.0125 * (1 + 0.05 * u());
+      return { ci, name: PALETTE[ci][0], hex: PALETTE[ci][1], r, mass: r ** 3, rr: 0.012 * (1 + 0.5 * u()), cd: 0.11 * (1 + 0.5 * u()),
+        s: track.startS - 0.03 - row * 0.032, v: 0, d: lane * 0.012, vd: 0, finished: false, finishT: null, gone: false, stopAt: null, nextJoint: 0,
+        // grip and drag vary along the track differently for every marble, so the fastest marble
+        // changes from section to section (more overtaking with more chaos)
+        wl: 1.5 + 2.5 * rnd(), wp: rnd() * 6.283, wa: chaos };
+    });
+    this.t = 0; this.gateOpen = false; this.finishedCount = 0;
+    this.jointSpacing = 0.7;
+  }
+  step(dt) {
+    const T = this.track, M = this.m;
+    this.t += dt;
+    for (const b of M) {
+      if (b.gone) continue;
+      if (!this.gateOpen) { b.v = 0; b.vd = 0; continue; }
+      if (b.stopAt != null && b.s >= b.stopAt) { b.s = b.stopAt; b.v = 0; b.vd *= 0.5; continue; }
+      const q = T.sample(b.s);
+      let a;
+      if (T.inLift(b.s)) { a = 6 * (0.55 - b.v); b.vd += -40 * b.d * dt - 6 * b.vd * dt; }
+      else {
+        const wob = 1 + b.wa * Math.sin(6.283 * b.s / b.wl + b.wp);
+        a = -(5 / 7) * G * q.ty - Math.sign(b.v) * b.rr * wob * G * (Math.abs(b.v) > 0.005 ? 1 : 0) - b.cd * wob * b.v * Math.abs(b.v)
+            - Math.sign(b.v) * 0.035 * b.v * b.v * Math.abs(q.cn);
+        const ad = -b.v * b.v * q.cn - 35 * b.d - 3.5 * b.vd;  // centrifugal push vs. the channel's restoring curve
+        b.vd += ad * dt;
+      }
+      const s0 = b.s;
+      b.v += a * dt; b.s += b.v * dt; b.d += b.vd * dt;
+      const lim = TRACK_W / 2 - b.r;
+      if (Math.abs(b.d) > lim) {
+        const sg = Math.sign(b.d); b.d = sg * lim;
+        if (b.vd * sg > 0) { b.v *= 1 - 0.02 * Math.min(1, Math.abs(b.vd) / 0.3); b.vd = -0.35 * b.vd; }
+      }
+      // track joints: tiny bumps that make every race different
+      const jn = Math.floor(b.s / this.jointSpacing);
+      if (jn !== Math.floor(s0 / this.jointSpacing) && !T.inLift(b.s)) { b.v *= 1 - 0.008 * rnd(); b.vd += pgauss() * 0.04; }
+      if (!b.finished && s0 < this.raceDist && b.s >= this.raceDist) {
+        b.finished = true; b.finishT = this.t - dt + dt * (this.raceDist - s0) / Math.max(1e-6, b.s - s0);
+        this.finishedCount++;
+        if (!T.closed) b.stopAt = T.L - 0.04 - (this.finishedCount - 1) * 0.0255;
+        else b.goneAt = this.t + 1.2;
+      }
+      if (b.goneAt && this.t > b.goneAt) b.gone = true;
+      if (!T.closed && b.s > T.L - 0.02) { b.s = T.L - 0.02; b.v = 0; }
+    }
+    // marble-marble collisions in the (along, across) plane
+    for (let i = 0; i < M.length; i++) for (let j = i + 1; j < M.length; j++) {
+      const A = M[i], B = M[j];
+      if (A.gone || B.gone) continue;
+      let ds = B.s - A.s;
+      if (T.closed) ds = ((ds % T.L) + 1.5 * T.L) % T.L - T.L / 2;
+      const dd = B.d - A.d, dist = Math.hypot(ds, dd), min = A.r + B.r;
+      if (dist >= min || dist < 1e-9) continue;
+      const nx = ds / dist, ny = dd / dist, push = (min - dist) / 2;
+      if (A.stopAt == null || A.s < A.stopAt) { A.s -= nx * push; A.d -= ny * push; }
+      if (B.stopAt == null || B.s < B.stopAt) { B.s += nx * push; B.d += ny * push; }
+      const vrel = (B.v - A.v) * nx + (B.vd - A.vd) * ny;
+      if (vrel < 0) {
+        const J = -(1 + 0.55) * vrel / (1 / A.mass + 1 / B.mass);
+        A.v -= J * nx / A.mass; A.vd -= J * ny / A.mass; B.v += J * nx / B.mass; B.vd += J * ny / B.mass;
+      }
+    }
+  }
+}
+
+// ============================================================ camera rig + simulated detector
+class RigCam {
+  constructor(id, kind, pos, target, fov, cover, fps, track) {
+    // Calibration disagreement between cameras: ±2 mm for segment cameras, ±0.3 mm for the timing camera.
+    Object.assign(this, { id, kind, cover, fps, online: true, phase: Math.random() / fps, next: 0, bias: (Math.random() * 2 - 1) * (kind === "finish" ? 0.0003 : 0.002) });
+    this.cam = new THREE.PerspectiveCamera(fov, 4 / 3, 0.02, 40);
+    this.cam.position.copy(pos); this.cam.lookAt(target); this.cam.updateMatrixWorld(); this.cam.updateProjectionMatrix();
+    this.target = target.clone(); this.track = track; this.lastSeen = {};
+    this.pxRad = THREE.MathUtils.degToRad(fov) / (kind === "overhead" ? 1200 : kind === "finish" ? 720 : 1080);  // radians per pixel
+  }
+  covers(s) {
+    const T = this.track, w = T.wrap(s);
+    if (!this.cover) return true;
+    const [lo, hi] = this.cover;
+    if (lo <= hi) return w >= lo && w <= hi;
+    return w >= lo || w <= hi;  // wraps around the lap line
+  }
+}
+function buildRig(track, kind, nSeg = 14) {
+  const cams = [], L = track.L, T = track;
+  const box = new THREE.Box3(); for (let i = 0; i <= T.N; i += 10) box.expandByPoint(new V3(T.px[i], T.py[i], T.pz[i]));
+  const center = box.getCenter(new V3()), size = box.getSize(new V3());
+  if (kind !== "overhead") {
+    const az = [90, -90, 135, -135, 180, 0, 45, -45];
+    const ov = 0.06;
+    for (let k = 0; k < nSeg; k++) {
+      let lo = k * L / nSeg - ov, hi = (k + 1) * L / nSeg + ov;
+      if (!T.closed) { lo = Math.max(0, lo); hi = Math.min(L, hi); }
+      const sc = (k + 0.5) * L / nSeg, q = T.sample(sc);
+      const yaw = Math.atan2(q.tz, q.tx) + THREE.MathUtils.degToRad(az[k % az.length]);
+      const D = Math.max(0.6, Math.min(1.6, 0.75 * L / nSeg));
+      const tgt = new V3(q.x, q.y + 0.012, q.z);
+      const pos = tgt.clone().add(new V3(Math.cos(yaw) * Math.SQRT1_2 * D, Math.SQRT1_2 * D, Math.sin(yaw) * Math.SQRT1_2 * D));
+      cams.push(new RigCam(`cam${String(k + 1).padStart(2, "0")}`, "segment", pos, tgt, 62, [T.wrap(lo), T.wrap(hi)], 30, T));
+    }
+  }
+  if (kind !== "angled") {
+    const h = Math.max(size.x, size.z) / (2 * Math.tan(THREE.MathUtils.degToRad(30))) * 1.05 + box.max.y;
+    cams.push(new RigCam("master", "overhead", new V3(center.x, h, center.z + 0.001), new V3(center.x, 0, center.z), 62, null, 30, T));
+  }
+  const f = T.sample(T.finishS);
+  const ftgt = new V3(f.x, f.y + 0.012, f.z);
+  const fpos = ftgt.clone().add(new V3(f.nx * 0.32, 0.32, f.nz * 0.32));
+  cams.push(new RigCam("finish", "finish", fpos, ftgt, 40, [T.wrap(T.finishS - 0.2), T.wrap(T.finishS + 0.2)], 240, T));
+  return cams;
+}
+
+const tmpV = new V3(), tmpW = new V3(), tmpR = new V3();
+function detect(cam, phys, faults, frameT) {
+  // What the edge node of `cam` would report this frame: a simulated detector with resolution-
+  // dependent noise, occlusion by tunnels, other track levels and other marbles, colour noise.
+  const T = phys.track, out = [], vis = [];
+  const camPos = cam.cam.position;
+  for (const b of phys.m) {
+    if (b.gone || !cam.covers(b.s) || T.inTunnel(b.s)) continue;
+    if (cam.kind === "overhead" && T.coveredAbove(b.s)) continue;
+    const W = T.world(b.s, b.d, b.r, new V3());
+    tmpV.copy(W).project(cam.cam);
+    if (Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1 || tmpV.z > 1) continue;
+    const depth = W.distanceTo(camPos);
+    // line of sight blocked by another part of the track?
+    let blocked = false;
+    for (let k = 1; k <= 7 && !blocked; k++) { tmpR.lerpVectors(W, camPos, k / 8 * Math.min(1, 0.6 / depth + 0.4)); blocked = T.blocks(tmpR, b.s); }
+    if (blocked) continue;
+    vis.push({ b, W, depth, ndc: tmpV.clone() });
+  }
+  for (const o of vis) {  // marble-on-marble occlusion along the line of sight
+    let occl = 0;
+    const dir = o.W.clone().sub(camPos).normalize();
+    for (const p of vis) {
+      if (p === o || p.depth >= o.depth) continue;
+      const dp = p.W.clone().sub(camPos).normalize();
+      const sep = Math.acos(Math.min(1, dir.dot(dp))), ro = o.b.r / o.depth, rp = p.b.r / p.depth;
+      if (sep < ro + rp) occl = Math.max(occl, Math.min(1, (ro + rp - sep) / (2 * ro)));
+    }
+    o.occl = occl;
+  }
+  // Dim lights: the edge node's illumination compensation restores the mean colour, so dimming
+  // shows up as extra sensor noise and as dark marbles dropping below the detection threshold.
+  const noiseK = faults.dim ? 1.8 : 1;
+  for (const o of vis) {
+    const b = o.b;
+    if (o.occl > 0.75) continue;
+    const Lb = LAB[b.ci][0];
+    if (Math.random() < 0.012 + (faults.dim && Lb < 35 ? 0.35 : 0)) continue;
+    const sigma = Math.max(0.0006, o.depth * cam.pxRad * 1.2) * (1 + 1.5 * o.occl);
+    const sMeas = T.wrap(b.s + cam.bias + gauss() * sigma - Math.sign(b.v || 1) * o.occl * b.r * 0.4);
+    const lab = LAB[b.ci].map((v) => v + gauss() * 2.5 * noiseK);
+    const d2 = LAB.map((p) => ((lab[0] - p[0]) ** 2 + (lab[1] - p[1]) ** 2 + (lab[2] - p[2]) ** 2) / 16);  // fixed calibrated models
+    const cands = [sMeas];
+    if (cam.kind === "overhead") for (const ps of T.partnersOf(b.s)) cands.push(T.wrap(ps + gauss() * sigma));
+    out.push({ cands, sigma, d2, lat: b.d + gauss() * 0.002, ci: b.ci, occl: o.occl, ndc: o.ndc, depth: o.depth });
+  }
+  cam.lastSeen = {}; for (const d of out) cam.lastSeen[d.ci] = d;
+  return out;
+}
+
+// ============================================================ tracker (port of marbletrack/fusion.py)
+function invert(A) {  // small dense matrix inverse (Gauss-Jordan); null if singular
+  const n = A.length, M = A.map((r, i) => [...r, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))]);
+  for (let c = 0; c < n; c++) {
+    let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-14) return null; [M[c], M[p]] = [M[p], M[c]];
+    const d = M[c][c]; for (let j = 0; j < 2 * n; j++) M[c][j] /= d;
+    for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c]; for (let j = 0; j < 2 * n; j++) M[r][j] -= f * M[c][j]; }
+  }
+  return M.map((r) => r.slice(n));
+}
+function hungarian(cost) {  // rows <= cols not required: pads to square
+  const n = cost.length, m = cost[0] ? cost[0].length : 0, N = Math.max(n, m);
+  if (!n || !m) return [];
+  const a = (i, j) => (i < n && j < m ? cost[i][j] : 1e9);
+  const u = new Float64Array(N + 1), v = new Float64Array(N + 1), p = new Int32Array(N + 1), way = new Int32Array(N + 1);
+  for (let i = 1; i <= N; i++) {
+    p[0] = i; let j0 = 0; const minv = new Float64Array(N + 1).fill(Infinity), used = new Uint8Array(N + 1);
+    do {
+      used[j0] = 1; const i0 = p[j0]; let delta = Infinity, j1 = 0;
+      for (let j = 1; j <= N; j++) if (!used[j]) {
+        const cur = a(i0 - 1, j - 1) - u[i0] - v[j];
+        if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+        if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+      }
+      for (let j = 0; j <= N; j++) { if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta; }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
+  }
+  const res = [];
+  for (let j = 1; j <= N; j++) if (p[j] && p[j] - 1 < n && j - 1 < m) res.push([p[j] - 1, j - 1]);
+  return res;
+}
+
+class Tracker {
+  constructor(track, phys, cams) {
+    this.T = track; this.raceDist = phys.raceDist;
+    this.q = 16; this.rFloor = 0.008 ** 2; this.rankMargin = 0.0125; this.now = 0;
+    this.m = phys.m.map((b) => ({ ci: b.ci, name: b.name, x: [0, 0], P: [[1, 0], [0, 1]], t: null, lastT: null, lastS: null, lastV: 0, lastVar: 1e-6, lastLat: 0,
+      nObs: 0, finishT: null, finishSig: 0, finishFinal: false, maneuverUntil: -1, placed: false, lastCam: null, hist: [] }));
+    this.cams = cams; this.lastFrame = {}; this.online = {}; cams.forEach((c) => (this.online[c.id] = true));
+    this.order = this.m.map((_, i) => i); this.leadSince = new Map(); this.events = [];
+    this.blind = this.computeBlind();
+  }
+  computeBlind() {  // track intervals no online camera sees, plus tunnels (and stacked levels, for overhead-only rigs)
+    const T = this.T, step = 0.02, n = Math.ceil(T.L / step), zones = [];
+    let start = null;
+    const onlySky = this.cams.every((c) => c.kind !== "segment");
+    for (let k = 0; k <= n; k++) {
+      const s = Math.min(T.L, k * step);
+      const seen = !T.inTunnel(s) && this.cams.some((c) => this.online[c.id] && c.covers(s) && !(c.kind === "overhead" && T.coveredAbove(s)) && (c.kind !== "finish" || !onlySky || true));
+      if (!seen && start == null) start = s;
+      if (seen && start != null) { zones.push([start, s]); start = null; }
+    }
+    if (start != null) zones.push([start, T.L]);
+    return zones;
+  }
+  blindAhead(P) {  // furthest progress a hidden marble may reach from P through consecutive blind zones
+    const T = this.T, lap = T.closed ? Math.floor(P / T.L) * T.L : 0, w = P - lap;
+    let cap = w;
+    for (let pass = 0; pass < 2; pass++) for (const [a, b] of this.blind) if (a <= cap + 0.001 && b > cap) cap = b;
+    return lap + cap;
+  }
+  status(m, now) {
+    if (m.finishT != null) return "finished";
+    if (m.t == null) return "unseen";
+    const age = now - m.lastT;
+    if ((m.nObs < 3 || m.fresh < 3) && age <= 0.1) return "acquiring";
+    if (age <= 0.1) return "tracking";
+    return age <= 1.5 ? "coasting" : "lost";
+  }
+  predict(m, t) {
+    const dt = t - m.t; if (dt <= 0) return;
+    const q = this.q * (t <= m.maneuverUntil ? 25 : 1);
+    const [[a, b], [c, d]] = m.P;
+    m.x = [m.x[0] + dt * m.x[1], m.x[1]];
+    const p00 = a + dt * (b + c) + dt * dt * d + q * dt ** 3 / 3, p01 = b + dt * d + q * dt * dt / 2, p11 = d + q * dt;
+    m.P = [[p00, p01], [p01, p11]]; m.t = t;
+    const cap = this.blindAhead(m.lastS + 0.05 + Math.max(0, m.lastV) * 0.15);
+    if (m.x[0] > cap) m.x[0] = cap;
+  }
+  unwrap(m, s) {  // measured lap position -> cumulative progress nearest the prediction
+    const T = this.T;
+    if (!T.closed) return s;
+    const ref = m.t != null ? m.x[0] : T.startS;
+    return s + T.L * Math.round((ref - s) / T.L);
+  }
+  process(t, camId, dets) {
+    this.now = Math.max(this.now, t);
+    this.lastFrame[camId] = t;
+    let changed = false;
+    for (const c of this.cams) {
+      const lf = this.lastFrame[c.id], on = lf != null ? this.now - lf <= 0.3 : this.now <= 0.3;
+      if (on !== this.online[c.id]) { this.online[c.id] = on; changed = true; this.events.push([this.now, on ? "camera_online" : "camera_offline", c.id]); }
+    }
+    if (changed) this.blind = this.computeBlind();
+    for (const m of this.m) if (m.t != null) this.predict(m, t);
+    if (!dets.length) return;
+    const n = dets.length, K = this.m.length, BIG = 1e9;
+    const cost = dets.map(() => new Array(K).fill(BIG)), choice = {};
+    dets.forEach((d, i) => {
+      const best = Math.min(...this.m.map((m) => d.d2[m.ci]));
+      this.m.forEach((m, j) => {
+        if (m.finishT != null && this.now - m.lastT > 0.1) return;
+        const c = d.d2[m.ci];
+        if (c > 50 || c > best + 20) return;
+        const r = d.sigma ** 2 + this.rFloor;
+        if (m.t == null) { cost[i][j] = c; choice[i + "," + j] = [this.unwrap(m, d.cands[0]), r]; return; }
+        let bestMd = Infinity, bestP = null;
+        for (const s of d.cands) {
+          const P = this.unwrap(m, s), lag = Math.max(0, m.t - t), y = P - (m.x[0] - lag * m.x[1]);
+          const S = m.P[0][0] + r + this.q * lag ** 3 / 3, md = y * y / S;
+          if (md < bestMd) { bestMd = md; bestP = P; }
+        }
+        if (bestMd <= 25) { cost[i][j] = c + bestMd; choice[i + "," + j] = [bestP, r]; }
+      });
+    });
+    for (const [i, j] of hungarian(cost)) {
+      if (cost[i][j] >= BIG) continue;
+      const [P, r] = choice[i + "," + j], m = this.m[j], d = dets[i];
+      if (d.ci !== m.ci && this.debug) this.debug.push({ t: +t.toFixed(3), cam: camId, detOf: PALETTE[d.ci][0], givenTo: m.name,
+        d2Given: +d.d2[m.ci].toFixed(1), d2Own: +d.d2[d.ci].toFixed(1), owner: this.status(this.m.find((o) => o.ci === d.ci), this.now), nDet: dets.length,
+        md: +(cost[i][j] - d.d2[m.ci]).toFixed(1), ownerCost: +(cost[i][this.m.findIndex((o) => o.ci === d.ci)] ?? -1) });
+      this.update(m, t, P, r, d.sigma ** 2, camId);
+      m.lastLat = d.lat;
+    }
+  }
+  update(m, t, P, r, rpx, camId) {
+    if (m.t == null) {
+      const sp = this.m.filter((o) => o.t != null && o.nObs >= 3 && o.finishT == null).map((o) => o.x[1]).sort((a, b) => a - b);
+      m.x = [P, sp.length ? sp[sp.length >> 1] : 0]; m.P = [[r, 0], [0, 1]]; m.t = t; m.fresh = 0;
+    } else if (m.lastT != null && t - m.lastT > 0.3) {
+      // Re-acquired after a long gap (dead camera, tunnel, dropped frames): restart from the
+      // average speed across the gap instead of filtering through the jump, and require three
+      // fresh sightings before the marble may gain places again.
+      const vAvg = (P - m.lastS) / (t - m.lastT);
+      m.x = [P, Math.max(0, Math.min(4, vAvg))]; m.P = [[r, 0], [0, 0.25]]; m.t = t; m.fresh = 0; m.maneuverUntil = -1;
+    } else {
+      let S = m.P[0][0] + r, y = P - m.x[0];
+      if (y * y / S > 9) { m.maneuverUntil = t + 0.15; m.P[1][1] += this.q * 25 * 0.15 / 4; S = m.P[0][0] + r; }
+      const k0 = m.P[0][0] / S, k1 = m.P[1][0] / S;
+      m.x = [m.x[0] + k0 * y, m.x[1] + k1 * y];
+      const [[a, b], [c, d]] = m.P;
+      m.P = [[(1 - k0) * a, (1 - k0) * b], [c - k1 * a, d - k1 * b]];
+      m.P[0][1] = m.P[1][0] = (m.P[0][1] + m.P[1][0]) / 2;
+    }
+    if (m.finishT == null && m.lastS != null && m.lastS < this.raceDist && P >= this.raceDist) {
+      const f = (this.raceDist - m.lastS) / (P - m.lastS), speed = (P - m.lastS) / Math.max(1e-6, t - m.lastT);
+      m.finishT = m.lastT + f * (t - m.lastT);
+      m.finishSig = Math.max(Math.sqrt((1 - f) ** 2 * m.lastVar + f * f * rpx) / Math.max(0.05, speed), 0.25 * (t - m.lastT));
+      this.events.push([t, "finish", m.name, m.finishT, m.finishSig]);
+    }
+    if (m.lastT == null || t > m.lastT) { m.lastT = t; m.lastS = P; m.lastV = m.x[1]; m.lastVar = rpx; m.lastCam = camId; m.fresh = (m.fresh || 0) + 1; }
+    m.hist.push([t, P, rpx]); if (m.hist.length > 40) m.hist.shift();
+    m.nObs++;
+    if (m.finishT != null && !m.finishFinal && t >= m.finishT + 0.03) this.refineFinish(m);
+  }
+  refineFinish(m) {
+    // Weighted least squares s(t) = b0 + b1·τ + b2·τ² over every observation within ±30 ms of
+    // the provisional crossing, solved for s = finish line; σ propagated from the fit covariance.
+    m.finishFinal = true;
+    const t0 = m.finishT, pts = m.hist.filter(([t]) => Math.abs(t - t0) <= 0.03);
+    if (pts.length < 4 || pts[0][0] > t0 || pts[pts.length - 1][0] < t0) return;
+    const deg = pts.length >= 6 ? 2 : 1, n = deg + 1;
+    const A = Array.from({ length: n }, () => new Array(n).fill(0)), bv = new Array(n).fill(0);
+    for (const [t, P, v] of pts) { const w = 1 / Math.max(v, 1e-10), x = [1, t - t0, (t - t0) ** 2]; for (let i = 0; i < n; i++) { bv[i] += w * x[i] * P; for (let j = 0; j < n; j++) A[i][j] += w * x[i] * x[j]; } }
+    const inv = invert(A); if (!inv) return;
+    const beta = inv.map((row) => row.reduce((acc, a, j) => acc + a * bv[j], 0));
+    let chi = 0; for (const [t, P, v] of pts) { const tt = t - t0, f = beta[0] + beta[1] * tt + (deg === 2 ? beta[2] * tt * tt : 0); chi += (P - f) ** 2 / Math.max(v, 1e-10); }
+    const scale = Math.max(1, chi / Math.max(1, pts.length - n));
+    let tau = 0;
+    for (let k = 0; k < 8; k++) { const g = beta[0] + beta[1] * tau + (deg === 2 ? beta[2] * tau * tau : 0) - this.raceDist, dg = beta[1] + (deg === 2 ? 2 * beta[2] * tau : 0); if (dg <= 0) return; tau -= g / dg; }
+    if (Math.abs(tau) > 0.03) return;
+    const dg = beta[1] + (deg === 2 ? 2 * beta[2] * tau : 0), J = [1, tau, tau * tau].slice(0, n).map((x) => -x / dg);
+    let varT = 0; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) varT += J[i] * inv[i][j] * J[j] * scale;
+    m.finishT = t0 + tau; m.finishSig = Math.sqrt(varT);
+    this.events.push([this.now, "finish_confirmed", m.name, m.finishT, m.finishSig]);
+  }
+  leaderboard(now = this.now) {
+    const M = this.m, fin = M.map((m, i) => i).filter((i) => M[i].finishT != null).sort((a, b) => M[a].finishT - M[b].finishT);
+    let racing = this.order.filter((i) => M[i].finishT == null);
+    for (const i of [...racing]) {  // first sighting: insert at its true place
+      const m = M[i];
+      if (m.t != null && !m.placed) {
+        racing = racing.filter((x) => x !== i);
+        let pos = racing.findIndex((j) => M[j].t == null || M[j].x[0] < m.x[0]); if (pos < 0) pos = racing.length;
+        racing.splice(pos, 0, i); m.placed = true;
+      }
+    }
+    const st = {}; racing.forEach((i) => (st[i] = this.status(M[i], now)));
+    const key = (i) => (M[i].t != null ? M[i].x[0] : -Infinity), obs = (i) => st[i] === "tracking";
+    const vr = (i) => (obs(i) ? M[i].lastVar : st[i] === "coasting" || st[i] === "acquiring" ? M[i].P[0][0] : 0);
+    const need = (a, b) => this.rankMargin + 2 * Math.sqrt(vr(a) + vr(b));
+    const leads = (b, a) => key(b) > key(a) + need(a, b) && (obs(b) || M[a].t == null);
+    const leading = new Map();
+    for (const b of racing) for (const a of racing) if (a !== b && leads(b, a)) leading.set(b + ">" + a, this.leadSince.get(b + ">" + a) ?? now);
+    this.leadSince = leading;
+    const confirmed = (b, a) => {
+      const k = b + ">" + a; if (!leading.has(k)) return false;
+      return key(b) > key(a) + need(a, b) + this.rankMargin || now - leading.get(k) >= 0.1 || !M[a].placed;
+    };
+    const mayPass = (k) => {
+      const a = racing[k], b = racing[k + 1];
+      if (confirmed(b, a)) return true;
+      if (obs(b) && (st[a] === "coasting" || st[a] === "acquiring")) {
+        for (let j = k - 1; j >= 0; j--) if (obs(racing[j])) return confirmed(b, racing[j]);
+      }
+      return false;
+    };
+    let swapped = true, guard = 0;
+    while (swapped && guard++ < 400) { swapped = false; for (let k = 0; k < racing.length - 1; k++) if (mayPass(k)) { [racing[k], racing[k + 1]] = [racing[k + 1], racing[k]]; swapped = true; } }
+    this.order = [...fin, ...racing];
+    const photo = new Set();
+    for (let k = 0; k + 1 < fin.length; k++) {
+      const a = M[fin[k]], b = M[fin[k + 1]];
+      if (b.finishT - a.finishT < Math.max(0.0005, 3 * Math.hypot(a.finishSig, b.finishSig))) { photo.add(fin[k]); photo.add(fin[k + 1]); }
+    }
+    const leadP = Math.max(...racing.map(key), -Infinity);
+    return this.order.map((i, r) => ({ i, rank: r + 1, m: M[i], status: this.status(M[i], now), photo: photo.has(i),
+      gap: M[i].finishT != null ? M[i].finishT - M[fin[0]].finishT : leadP - key(i) }));
+  }
+}
+
+// ============================================================ scene
+const view = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.shadowMap.autoUpdate = false;
+renderer.domElement.className = "gl";
+view.prepend(renderer.domElement);
+const labelRenderer = new THREE.CSS2DRenderer(); labelRenderer.domElement.id = "labels"; $("labels").replaceWith(labelRenderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c1117); scene.fog = new THREE.Fog(0x0c1117, 12, 30);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 60); camera.layers.enable(1);
+const controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.maxDistance = 25; controls.minDistance = 0.05;
+scene.add(new THREE.HemisphereLight(0xdfe8f5, 0x1d232b, 0.6));
+const sun = new THREE.DirectionalLight(0xfff4e6, 0.95); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; scene.add(sun, sun.target);
+const fill = new THREE.DirectionalLight(0x9fc4ff, 0.25); fill.position.set(-3, 2, -2); scene.add(fill);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x1f2b24, roughness: 0.95 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const grid = new THREE.GridHelper(20, 40, 0x2c3a31, 0x24302a); grid.position.y = 0.0005; scene.add(grid);
+
+function marbleTexture(hex, seed) {
+  const c = document.createElement("canvas"); c.width = 128; c.height = 64; const g = c.getContext("2d");
+  g.fillStyle = hex; g.fillRect(0, 0, 128, 64);
+  const r2 = mulberry32(seed);
+  for (let k = 0; k < 3; k++) {
+    g.strokeStyle = `rgba(255,255,255,${0.18 + 0.12 * r2()})`; g.lineWidth = 3 + 4 * r2(); g.beginPath();
+    const ph = r2() * 6, amp = 8 + 10 * r2(), y0 = 12 + 40 * r2();
+    for (let x = 0; x <= 128; x += 4) g.lineTo(x, y0 + amp * Math.sin(x / 128 * Math.PI * 2 * (1 + k) + ph));
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+}
+function label(text, cls) { const d = document.createElement("div"); d.className = "lbl " + cls; d.textContent = text; const o = new THREE.CSS2DObject(d); o.layers.set(1); return o; }
+function showLabel(o, v) { o.visible = v; o.element.classList.toggle("hide", !v); }
+
+let W = null;  // world: everything built for the current race
+
+function trackMeshes(T, root) {
+  const floorPos = [], floorIdx = [], wallPos = [], wallIdx = [];
+  const step = 2;  // every 2 cm
+  const verts = [];
+  for (let i = 0; i <= T.N; i += step) verts.push(i);
+  if (T.closed && verts[verts.length - 1] !== T.N) verts.push(T.N);
+  const hw = TRACK_W / 2 + 0.003;
+  verts.forEach((i, k) => {
+    const x = T.px[i], y = T.py[i], z = T.pz[i], nx = T.nx[i], nz = T.nz[i];
+    floorPos.push(x - nx * hw, y, z - nz * hw, x + nx * hw, y, z + nz * hw);
+    for (const sg of [-1, 1]) wallPos.push(x + sg * nx * hw, y, z + sg * nz * hw, x + sg * nx * hw, y + WALL_H, z + sg * nz * hw);
+    if (k) {
+      const a = 2 * (k - 1); floorIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      const w0 = 4 * (k - 1); for (const o of [0, 2]) wallIdx.push(w0 + o, w0 + o + 1, w0 + o + 4, w0 + o + 1, w0 + o + 5, w0 + o + 4);
+    }
+  });
+  const mk = (pos, idx, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; root.add(m); return m; };
+  mk(floorPos, floorIdx, new THREE.MeshStandardMaterial({ color: 0x9aa1aa, roughness: 0.55, metalness: 0.1, side: THREE.DoubleSide }));
+  mk(wallPos, wallIdx, new THREE.MeshStandardMaterial({ color: 0xc9d0da, roughness: 0.35, metalness: 0.15, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+  // supports
+  const supMat = new THREE.MeshStandardMaterial({ color: 0x55606c, roughness: 0.6, metalness: 0.3 });
+  for (let s = 0.2; s < T.L; s += 0.45) {
+    const q = T.sample(s); if (q.y < 0.05) continue;
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.008, q.y, 6), supMat); c.position.set(q.x, q.y / 2 - 0.004, q.z); c.castShadow = true; root.add(c);
+  }
+  // tunnels
+  const tunMat = new THREE.MeshStandardMaterial({ color: 0x7a4f2c, roughness: 0.8, transparent: true, opacity: 0.93, side: THREE.DoubleSide });
+  for (const [a, b] of T.tunnels) {
+    const pos = [], idx = []; const n = Math.ceil((b - a) / 0.02);
+    for (let k = 0; k <= n; k++) {
+      const q = T.sample(a + (b - a) * k / n);
+      for (let j = 0; j <= 8; j++) { const ang = Math.PI * j / 8, rr = TRACK_W * 0.85; pos.push(q.x + q.nx * Math.cos(ang) * rr, q.y + Math.sin(ang) * rr * 1.1, q.z + q.nz * Math.cos(ang) * rr); }
+      if (k) for (let j = 0; j < 8; j++) { const p0 = (k - 1) * 9 + j, p1 = k * 9 + j; idx.push(p0, p1, p0 + 1, p1, p1 + 1, p0 + 1); }
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, tunMat); m.castShadow = true; root.add(m);
+  }
+  // chain lift
+  if (T.lift) {
+    const [a, b] = T.lift, pts = []; for (let s = a; s <= b; s += 0.02) pts.push(T.world(s, 0, 0.002));
+    const tex = (() => { const c = document.createElement("canvas"); c.width = 64; c.height = 8; const g = c.getContext("2d"); for (let x = 0; x < 64; x += 8) { g.fillStyle = x % 16 ? "#3a3f46" : "#f2a93b"; g.fillRect(x, 0, 8, 8); } const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; return t; })();
+    tex.repeat.set((b - a) / 0.05, 1);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), pts.length * 2, 0.006, 6, false), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5 }));
+    root.add(tube); W && (W.liftTex = tex); root.userData.liftTex = tex;
+  }
+  // start/finish line
+  const fq = T.sample(T.finishS), cells = 8;
+  for (let c = 0; c < cells; c++) for (let r = 0; r < 2; r++) {
+    const g = new THREE.PlaneGeometry(TRACK_W / cells, 0.006); const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: (c + r) % 2 ? 0x111111 : 0xf4f4f4, side: THREE.DoubleSide }));
+    const off = -TRACK_W / 2 + (c + 0.5) * TRACK_W / cells;
+    const p = T.world(T.finishS + (r - 0.5) * 0.006, off, 0.0015); m.position.copy(p);
+    m.lookAt(p.clone().add(UP)); m.rotateZ(Math.atan2(fq.tx, fq.tz)); root.add(m);
+  }
+  const fl = label(T.closed ? "START / FINISH" : "FINISH", "map"); fl.position.copy(T.world(T.finishS, 0, 0.07)); root.add(fl);
+  // centerline + waypoints (toggle)
+  const cl = new THREE.Group(); cl.visible = false; root.add(cl);
+  const lp = []; for (let i = 0; i <= T.N; i += 3) lp.push(new V3(T.px[i], T.py[i] + 0.001, T.pz[i]));
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(lp), new THREE.LineBasicMaterial({ color: 0x6cc4d8 })); line.layers.set(1); cl.add(line);
+  const wp = new THREE.InstancedMesh(new THREE.SphereGeometry(0.003, 6, 4), new THREE.MeshBasicMaterial({ color: 0x6cc4d8 }), Math.ceil(T.N / 5) + 1);
+  const mt = new THREE.Matrix4(); let n = 0; for (let i = 0; i <= T.N; i += 5) { mt.setPosition(T.px[i], T.py[i] + 0.002, T.pz[i]); wp.setMatrixAt(n++, mt); } wp.count = n; wp.layers.set(1); cl.add(wp);
+  return cl;
+}
+
+function buildWorld(seed) {
+  if (W) { scene.remove(W.root); W.labels.forEach((l) => l.element.remove()); }
+  const mapKey = $("map").value, mdef = MAPS[mapKey];
+  const T = new Track(mdef.build());
+  const phys = new Physics(T, +$("count").value, +$("laps").value, seed, +$("chaos").value);
+  const cams = buildRig(T, $("rig").value);
+  const root = new THREE.Group(); scene.add(root);
+  const centerline = trackMeshes(T, root);
+  const box = new THREE.Box3(); for (let i = 0; i <= T.N; i += 10) box.expandByPoint(new V3(T.px[i], T.py[i], T.pz[i]));
+  const c = box.getCenter(new V3()), sz = box.getSize(new V3());
+  sun.position.set(c.x - 2, c.y + 6, c.z + 3); sun.target.position.copy(c);
+  const sc = sun.shadow.camera, ext = Math.max(sz.x, sz.z) * 0.75 + 0.5; sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.near = 0.5; sc.far = 20; sc.updateProjectionMatrix();
+  const labels = [...root.children.filter((o) => o.isCSS2DObject)];
+  // camera bodies + frustums
+  const camGroup = new THREE.Group(); camGroup.visible = false; root.add(camGroup);
+  for (const rc of cams) {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.05), new THREE.MeshStandardMaterial({ color: 0x2b3440 }));
+    body.position.copy(rc.cam.position); body.quaternion.copy(rc.cam.quaternion); body.layers.set(1); camGroup.add(body);
+    const helper = new THREE.CameraHelper(rc.cam); helper.layers.set(1); rc.helper = helper; camGroup.add(helper);
+    const l = label(rc.id, "cam"); l.position.copy(rc.cam.position).add(new V3(0, 0.04, 0)); camGroup.add(l); rc.label = l; labels.push(l);
+  }
+  // marbles: true sphere, tracker box, label, trail
+  const meshes = phys.m.map((b, k) => {
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), new THREE.MeshPhysicalMaterial({ map: marbleTexture(b.hex, b.ci + 7), roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08, metalness: 0.0 }));
+    sphere.castShadow = true; sphere.userData.k = k; root.add(sphere);
+    const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)), new THREE.LineBasicMaterial({ color: b.hex, transparent: true }));
+    box.layers.set(1); box.userData.k = k; root.add(box);
+    const l = label(b.name, "marble"); l.element.style.borderColor = b.hex; root.add(l); labels.push(l);
+    const trailGeo = new THREE.BufferGeometry(); trailGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(90 * 3), 3));
+    const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: b.hex, transparent: true, opacity: 0.55 })); trail.layers.set(1); trail.frustumCulled = false; root.add(trail);
+    return { sphere, box, label: l, trail, hist: [] };
+  });
+  const tracker = new Tracker(T, phys, cams);
+  W = { mapKey, mdef, T, phys, cams, tracker, root, labels, meshes, camGroup, centerline, box, center: c, size: sz, seed,
+    state: "grid", tStart: performance.now(), lastEval: 0, replay: [], metrics: newMetrics(), log: [], faults: { dim: false, jitter: false },
+    tv: { cam: null, since: -9 }, prevOrder: null, truthHist: [], selected: null, speedHist: phys.m.map(() => []), liftTex: root.userData.liftTex };
+  $("laps").disabled = !mdef.laps;
+  $("rigName").textContent = { angled: "14 angled cams", overhead: "1 overhead cam", hybrid: "overhead + 14 angled" }[$("rig").value];
+  $("towerNote").textContent = mdef.laps ? `${phys.laps} laps · T = true position` : "T = true position";
+  {  // calibration rule: every pair of marbles in the race must be separable (d² ≥ 50)
+    let worst = [Infinity, "", ""];
+    for (const a of phys.m) for (const b of phys.m) if (a.ci < b.ci) { const d2 = LAB[a.ci].reduce((acc, v, k) => acc + (v - LAB[b.ci][k]) ** 2, 0) / 16; if (d2 < worst[0]) worst = [d2, a.name, b.name]; }
+    logMsg(`Palette check: closest pair ${worst[1]}/${worst[2]} d² ${worst[0].toFixed(0)} ${worst[0] >= 50 ? "≥ 50 ✓" : "< 50: would be rejected at calibration"}`, worst[0] >= 50 ? "ok" : "bad");
+  }
+  logMsg(`${mdef.name} · ${phys.m.length} marbles · ${(T.L).toFixed(1)} m${mdef.laps ? ` × ${phys.laps} laps` : ""} · ${mdef.note}`, "amb");
+  buildCamGrid();
+  applyToggles();
+  fitView(true);
+  startLights();
+  selectMarble(null);
+}
+function newMetrics() { return { evals: 0, ok: 0, okLat: 0, phantom: 0, shown: 0, idErr: 0, sq: 0, nsq: 0, dets: 0 }; }
+
+// ============================================================ race flow
+let playing = true, speed = 1, lastTs = null, simAcc = 0, replayMode = false, replayIdx = 0;
+function startLights() {
+  const L = $("lights"), lamps = [...L.children]; L.hidden = false; lamps.forEach((l) => l.classList.remove("on"));
+  W.state = "grid"; W.lightsT = 0;
+}
+function updateLights(dt) {
+  if (W.state !== "grid") return;
+  W.lightsT += dt;
+  const lamps = [...$("lights").children], n = Math.min(5, Math.floor(W.lightsT / 0.55));
+  lamps.forEach((l, k) => l.classList.toggle("on", k < n));
+  if (W.lightsT > 0.55 * 5 + 0.6 + Math.random() * 0.02) {
+    $("lights").hidden = true; W.state = "racing"; W.phys.gateOpen = true; W.raceT0 = W.phys.t; logMsg("Lights out: race started", "ok");
+  }
+}
+
+function simulate(dt) {
+  const P = W.phys, sub = 1 / 240;
+  simAcc += dt;
+  while (simAcc >= sub) {
+    simAcc -= sub;
+    P.step(sub);
+    for (const c of W.cams) {  // each camera fires on its own clock (unsynchronised)
+      if (P.t < c.next) continue;
+      c.next = (Math.floor(P.t * c.fps) + 1) / c.fps + c.phase;
+      if (!c.online) continue;
+      if (W.faults.jitter && Math.random() < 0.12) continue;  // frame lost in the network
+      const dets = detect(c, P, W.faults, P.t);
+      W.metrics.dets += dets.length;
+      W.tracker.process(P.t, c.id, dets);
+    }
+    if (P.t - W.lastEval >= 1 / 30) { W.lastEval = P.t; evaluate(); }
+  }
+  if (W.state === "racing" && (P.finishedCount === P.m.length || P.t - W.raceT0 > 240)) finishRace();
+}
+
+function truthProgress(b) { return b.s; }
+function evaluate() {
+  // Score the live board against the physics, 30 times a second (same metrics as the Python suite).
+  const tr = W.tracker, board = tr.leaderboard(W.phys.t), M = W.phys.m, met = W.metrics, now = W.phys.t;
+  const truth = M.map(truthProgress), tie = 0.05;
+  W.truthHist.push([now, truth.slice()]); while (W.truthHist.length && W.truthHist[0][0] < now - 0.1) W.truthHist.shift();
+  const ahead = (i, j, t) => (M[i].finished && M[j].finished && t[i] >= W.phys.raceDist && t[j] >= W.phys.raceDist ? M[i].finishT <= M[j].finishT : t[i] >= t[j] - tie);
+  if (W.state === "racing") {
+    const seen = board.filter((e) => e.status === "tracking" || e.status === "finished");
+    let ok = true, okLat = true;
+    for (let k = 0; k + 1 < seen.length; k++) {
+      const a = seen[k], b = seen[k + 1];
+      let good;
+      if (a.status === "finished" && b.status === "finished") good = M[a.i].finishT <= M[b.i].finishT || (a.photo && b.photo);
+      else if (b.status === "finished") good = false;
+      else good = ahead(a.i, b.i, truth);
+      ok &&= good; okLat &&= good || W.truthHist.some(([, t]) => ahead(a.i, b.i, t));
+    }
+    met.evals++; met.ok += ok; met.okLat += okLat;
+    const order = board.map((e) => e.i);
+    if (W.prevOrder) {
+      const pos0 = new Map(W.prevOrder.map((m, k) => [m, k]));
+      for (let k = 0; k < order.length; k++) for (let j = k + 1; j < order.length; j++) {
+        const x = order[k], y = order[j];
+        if (pos0.get(x) > pos0.get(y) && board[k].status !== "unseen" && board[j].status !== "unseen") {
+          met.shown++;
+          if (!W.truthHist.some(([, t]) => ahead(x, y, t))) {
+            met.phantom++;
+            (W.phantomLog ||= []).push({ t: +(now - W.raceT0).toFixed(2), x: M[x].name, y: M[y].name, sx: board[k].status, sy: board[j].status,
+              estX: +tr.m[x].x[0].toFixed(3), trueX: +truth[x].toFixed(3), estY: +tr.m[y].x[0].toFixed(3), trueY: +truth[y].toFixed(3),
+              camX: tr.m[x].lastCam, camY: tr.m[y].lastCam, ageX: +(now - tr.m[x].lastT).toFixed(3), lastSX: +tr.m[x].lastS.toFixed(3), vX: +tr.m[x].x[1].toFixed(2), vTrueX: +M[x].v.toFixed(2),
+              histX: tr.m[x].hist.slice(-6).map(([tt, P]) => [+(tt - W.raceT0).toFixed(3), +P.toFixed(3)]), dim: W.faults.dim, jit: W.faults.jitter, off: W.cams.filter((c) => !c.online).map((c) => c.id).join(",") });
+          }
+        }
+      }
+    }
+    W.prevOrder = order;
+    for (const e of board) if (e.status === "tracking") { const err = e.m.x[0] - truth[e.i]; met.sq += err * err; met.nsq++; if (Math.abs(err) > 0.15) met.idErr++; }
+  }
+  // instant replay buffer (30 s)
+  W.replay.push({ t: now, s: M.map((b) => b.s), d: M.map((b) => b.d), gone: M.map((b) => b.gone), est: tr.m.map((m) => (m.t != null ? m.x[0] : null)),
+    lat: tr.m.map((m) => m.lastLat), board: board.map((e) => ({ i: e.i, status: e.status, photo: e.photo, gap: e.gap })), online: W.cams.map((c) => tr.online[c.id]) });
+  if (W.replay.length > 900) W.replay.shift();
+  M.forEach((b, k) => { const h = W.speedHist[k]; h.push([now, b.v, tr.m[k].t != null ? tr.m[k].x[1] : null]); if (h.length > 300) h.shift(); });
+  // lead changes and tracker events into the log
+  const lead = board.find((e) => e.status !== "finished");
+  if (W.state === "racing" && lead && W.lastLeader !== lead.i && board[0].status !== "finished") { if (W.lastLeader != null) logMsg(`${fmtT(now)} ${lead.m.name} takes the lead`, ""); W.lastLeader = lead.i; }
+  while (tr.events.length) {
+    const [t, kind, who, ft, sg] = tr.events.shift();
+    if (kind === "finish") logMsg(`${fmtT(t)} ${who} crosses the line`, "amb");
+    else if (kind === "finish_confirmed") logMsg(`${fmtT(t)} ${who} finish confirmed · ${(ft - W.raceT0).toFixed(4)} s ± ${(sg * 1000).toFixed(2)} ms`, "amb");
+    else logMsg(`${fmtT(t)} ${who} ${kind === "camera_offline" ? "offline: its section is now a blind zone" : "back online"}`, kind === "camera_offline" ? "bad" : "ok");
+  }
+}
+function finishRace() {
+  W.state = "finished";
+  const board = W.tracker.leaderboard(W.phys.t), M = W.phys.m;
+  const truthOrder = M.map((b, i) => i).filter((i) => M[i].finishT != null).sort((a, b) => M[a].finishT - M[b].finishT);
+  const rows = board.slice(0, 8).map((e, k) => {
+    const okk = truthOrder[k] === e.i || e.photo;
+    return `<li>${e.m.name} · ${e.m.finishT != null ? (e.m.finishT - W.raceT0).toFixed(3) + " s" : "—"}${e.photo ? " · PHOTO" : ""} ${okk ? "✓" : "✕"}</li>`;
+  }).join("");
+  const exact = board.every((e, k) => truthOrder[k] === e.i || e.photo);
+  $("banner").innerHTML = `<h3>Chequered flag</h3><ol>${rows}</ol><p class="muted">Tracker result ${exact ? "matches" : "differs from"} the true finishing order${board.some((e) => e.photo) ? "; photo-finish pairs go to review" : ""}.</p><button id="again" class="primary" type="button">New race</button>`;
+  $("banner").hidden = false; $("again").onclick = () => newRace();
+  logMsg(`Race over · tracker result ${exact ? "correct" : "differs"}`, exact ? "ok" : "bad");
+}
+const fmtT = (t) => ((t - (W.raceT0 ?? 0)).toFixed(2) + " s").padStart(8, " ");
+
+// ============================================================ views, zoom, focus
+let viewMode = "orbit", zoomF = 1;
+function fitView(jump) {
+  const c = W.center, s = Math.max(W.size.x, W.size.z, 1.5);
+  controls.target.copy(c); camera.position.set(c.x - s * 0.15, c.y + s * 0.75, c.z + s * 0.9); controls.update();
+  setViewMode("orbit");
+}
+function setViewMode(m) {
+  viewMode = m;
+  document.querySelectorAll("#tools [data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === m));
+  controls.enabled = m === "orbit";
+  if (m === "overhead") { const c = W.center, s = Math.max(W.size.x, W.size.z); camera.position.set(c.x, c.y + s * 1.25 / zoomF, c.z + 0.001); controls.target.copy(c); }
+}
+function zoomBy(f) {
+  if (viewMode === "orbit") { const off = camera.position.clone().sub(controls.target).multiplyScalar(1 / f); if (off.length() > 0.05 && off.length() < 25) camera.position.copy(controls.target).add(off); controls.update(); }
+  else { zoomF = Math.max(0.2, Math.min(6, zoomF * f)); camera.fov = viewMode === "tv" || viewMode === "finish" ? Math.max(8, Math.min(70, 50 / zoomF)) : 45; camera.updateProjectionMatrix(); }
+  $("zoom").value = Math.round(Math.log(zoomF) / Math.log(6) * 100);
+}
+function marbleWorld(k, out = new V3()) {
+  const b = W.phys.m[k], sc = +$("mscale").value;
+  return W.T.world(b.s, b.d, b.r * sc, out);
+}
+function updateCamera(dt) {
+  const T = W.T;
+  if (viewMode === "leader" || viewMode === "selected") {
+    const board = W.tracker.leaderboard(W.phys.t);
+    const k = viewMode === "selected" && W.selected != null ? W.selected : (board.find((e) => e.status !== "finished") || board[0]).i;
+    const b = W.phys.m[k], q = T.sample(b.s), p = marbleWorld(k);
+    const dist = 0.45 / zoomF, back = new V3(-q.tx, 0, -q.tz).normalize();
+    const want = p.clone().add(back.multiplyScalar(dist)).add(new V3(0, dist * 0.55, 0));
+    camera.position.lerp(want, 1 - Math.exp(-dt * 4)); controls.target.lerp(p, 1 - Math.exp(-dt * 8)); camera.lookAt(controls.target);
+  } else if (viewMode === "tv" || viewMode === "finish") {
+    let rc = null;
+    if (viewMode === "finish") rc = W.cams.find((c) => c.id === "finish");
+    else {
+      const board = W.tracker.leaderboard(W.phys.t), lead = (board.find((e) => e.status !== "finished") || board[0]).i;
+      const s = W.phys.m[lead].s, seg = W.cams.filter((c) => c.kind === "segment" && c.online && c.covers(s));
+      if (W.tv.cam && seg.includes(W.tv.cam) || W.phys.t - W.tv.since < 1.5) rc = W.tv.cam;
+      else if (seg.length) { rc = seg[0]; W.tv = { cam: rc, since: W.phys.t }; }
+      rc = rc || W.tv.cam || W.cams[0];
+    }
+    camera.position.copy(rc.cam.position); camera.quaternion.copy(rc.cam.quaternion);
+    camera.fov = Math.max(8, Math.min(70, rc.cam.fov / zoomF)); camera.updateProjectionMatrix();
+  } else if (viewMode === "overhead") {
+    const c = W.center, s = Math.max(W.size.x, W.size.z);
+    camera.position.lerp(new V3(c.x, c.y + s * 1.25 / zoomF, c.z + 0.001), 0.2); controls.target.copy(c); camera.lookAt(c);
+  }
+  if (viewMode !== "tv" && viewMode !== "finish" && camera.fov !== 45) { camera.fov = 45; camera.updateProjectionMatrix(); }
+}
+
+// ============================================================ render
+const feedCanvas = $("feedOverlay"), fctx = feedCanvas.getContext("2d");
+let feedRects = [];
+function pickFeeds() {
+  if (!$("tFeeds").checked) return [];
+  const board = W.tracker.leaderboard(W.phys.t), seen = new Set(), out = [];
+  for (const e of board) {
+    if (out.length >= 4) break;
+    const b = W.phys.m[e.i]; if (b.gone) continue;
+    const c = W.cams.find((c) => c.kind === "segment" && c.covers(b.s) && !seen.has(c)) || W.cams.find((c) => c.covers(b.s) && !seen.has(c));
+    if (c) { seen.add(c); out.push(c); }
+  }
+  for (const c of W.cams) { if (out.length >= 4) break; if (!seen.has(c)) { seen.add(c); out.push(c); } }
+  return out;
+}
+function render() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h);
+  renderer.shadowMap.needsUpdate = true;
+  renderer.render(scene, camera); labelRenderer.render(scene, camera);
+  fctx.clearRect(0, 0, feedCanvas.width, feedCanvas.height);
+  const feeds = pickFeeds();
+  feedRects = [];
+  if (!feeds.length) return;
+  const fh = Math.min(150, Math.round(h * 0.22)), fw = Math.round(fh * 4 / 3), gap = 6, total = feeds.length * fw + (feeds.length - 1) * gap;
+  let x = Math.max(gap, Math.round((w - total) / 2));
+  renderer.setScissorTest(true);
+  const dpr = renderer.getPixelRatio();
+  for (const rc of feeds) {
+    const y = 8;
+    renderer.setViewport(x, y, fw, fh); renderer.setScissor(x, y, fw, fh);
+    rc.cam.aspect = fw / fh; rc.cam.updateProjectionMatrix();
+    if (rc.online) renderer.render(scene, rc.cam); else { renderer.setClearColor(0x200b0b); renderer.clear(); renderer.setClearColor(0x000000); }
+    feedRects.push({ rc, x, y: h - y - fh, w: fw, h: fh });
+    x += fw + gap;
+  }
+  renderer.setScissorTest(false);
+  // detection overlay: what each camera's edge node reported this frame
+  fctx.save(); fctx.scale(feedCanvas.width / w, feedCanvas.height / h);
+  for (const f of feedRects) {
+    fctx.strokeStyle = f.rc.online ? "rgba(255,255,255,.35)" : "#ef6b5e"; fctx.lineWidth = 1; fctx.strokeRect(f.x + 0.5, f.y + 0.5, f.w - 1, f.h - 1);
+    fctx.fillStyle = "rgba(14,19,26,.8)"; fctx.fillRect(f.x, f.y, f.w, 16);
+    fctx.fillStyle = f.rc.online ? "#e6e9ee" : "#ef6b5e"; fctx.font = "11px IBM Plex Mono, monospace";
+    fctx.fillText(`${f.rc.id}${f.rc.online ? ` · ${f.rc.fps} fps` : " · OFFLINE"}`, f.x + 5, f.y + 12);
+    if (!f.rc.online) continue;
+    for (const k in f.rc.lastSeen) {
+      const d = f.rc.lastSeen[k], b = W.phys.m.find((m) => m.ci === +k); if (!b || b.gone) continue;
+      const p = W.T.world(b.s, b.d, b.r * +$("mscale").value).project(f.rc.cam);
+      const px = f.x + (p.x + 1) / 2 * f.w, py = f.y + (1 - p.y) / 2 * f.h;
+      const rad = Math.max(4, b.r * +$("mscale").value / d.depth * (f.h / 2) / Math.tan(THREE.MathUtils.degToRad(f.rc.cam.fov / 2)));
+      if (px < f.x || px > f.x + f.w || py < f.y + 16 || py > f.y + f.h) continue;
+      fctx.strokeStyle = PALETTE[b.ci][1]; fctx.lineWidth = 1.5; fctx.strokeRect(px - rad, py - rad, 2 * rad, 2 * rad);
+      if (d.occl > 0.05) { fctx.fillStyle = "#f2a93b"; fctx.fillText(`${Math.round(d.occl * 100)}%`, px + rad + 2, py + 4); }
+    }
+  }
+  fctx.restore();
+}
+
+function updateScene(dt, frame) {
+  const T = W.T, sc = +$("mscale").value, M = W.phys.m, tr = W.tracker;
+  const board = frame ? frame.board : tr.leaderboard(W.phys.t);
+  const rankOf = new Map(board.map((e, k) => [e.i, k + 1])), stOf = new Map(board.map((e) => [e.i, e.status]));
+  M.forEach((b, k) => {
+    const me = W.meshes[k];
+    const s = frame ? frame.s[k] : b.s, d = frame ? frame.d[k] : b.d, gone = frame ? frame.gone[k] : b.gone;
+    const p = T.world(s, d, b.r * sc);
+    if (me.lastS != null && !frame) {  // rolling: rotate about (up × direction of travel)
+      const q = T.sample(s), ax = new V3().crossVectors(UP, new V3(q.tx, q.ty, q.tz)).normalize(), ang = (s - me.lastS) / (b.r * sc);
+      if (Math.abs(ang) < 3) me.sphere.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ax, ang));
+    }
+    me.lastS = s;
+    me.sphere.position.copy(p); me.sphere.scale.setScalar(b.r * sc); me.sphere.visible = !gone;
+    const est = frame ? frame.est[k] : tr.m[k].t != null ? tr.m[k].x[0] : null, st = stOf.get(k);
+    me.box.visible = !gone && est != null && st !== "unseen" && $("tBoxes").checked;
+    if (est != null) {
+      const q = T.sample(est); me.box.position.copy(T.world(est, frame ? frame.lat[k] : tr.m[k].lastLat, b.r * sc)); me.box.rotation.set(0, -Math.atan2(q.tz, q.tx), 0);
+      me.box.scale.setScalar(b.r * sc * 1.18); me.box.material.opacity = st === "tracking" || st === "finished" ? 1 : 0.35;
+    }
+    me.label.position.copy(p).add(new V3(0, b.r * sc + 0.02, 0));
+    me.label.element.textContent = `P${rankOf.get(k)} ${b.name}${st === "coasting" ? " · hidden" : ""}`;
+    me.label.element.classList.toggle("sel", W.selected === k);
+    showLabel(me.label, !gone && $("tLabels").checked);
+    if (!frame) { me.hist.push(p.clone()); if (me.hist.length > 90) me.hist.shift(); }
+    const arr = me.trail.geometry.attributes.position.array;
+    for (let i = 0; i < 90; i++) { const h = me.hist[Math.max(0, me.hist.length - 90 + i)] || p; arr[i * 3] = h.x; arr[i * 3 + 1] = h.y; arr[i * 3 + 2] = h.z; }
+    me.trail.geometry.attributes.position.needsUpdate = true; me.trail.visible = $("tTrails").checked && !gone;
+  });
+  for (const rc of W.cams) {
+    const on = frame ? frame.online[W.cams.indexOf(rc)] : tr.online[rc.id];
+    rc.helper.visible = $("tFrustums").checked; rc.label.element.classList.toggle("off", !on); rc.label.element.textContent = on ? rc.id : rc.id + " OFFLINE";
+    showLabel(rc.label, $("tFrustums").checked && $("tLabels").checked);
+    rc.helper.material.color && rc.helper.material.color.set(on ? 0x6fcf8e : 0xef6b5e);
+  }
+  if (W.liftTex) W.liftTex.offset.x -= dt * (playing ? speed : 0) * 0.55 / 0.05;
+}
+
+// ============================================================ side panels
+function renderTower(frame) {
+  const tr = W.tracker, M = W.phys.m;
+  const board = frame ? frame.board.map((e) => ({ ...e, m: tr.m[e.i] })) : tr.leaderboard(W.phys.t);
+  const truthOrder = M.map((b, i) => i).sort((a, b) => {
+    const fa = M[a].finishT != null, fb = M[b].finishT != null;
+    if (fa && fb) return M[a].finishT - M[b].finishT; if (fa !== fb) return fa ? -1 : 1; return (frame ? frame.s[b] - frame.s[a] : M[b].s - M[a].s);
+  });
+  const lapOf = (i) => (W.T.closed ? Math.max(0, Math.min(W.phys.laps, Math.floor(((frame ? frame.s[i] : M[i].s) - W.T.startS) / W.T.L) + 1)) : null);
+  $("tower").innerHTML = board.map((e) => {
+    const b = M[e.i], st = W.state === "grid" ? "grid" : e.status;
+    const fin = e.status === "finished";
+    const gap = fin ? (e.gap === 0 ? (b.finishT - W.raceT0).toFixed(3) + " s" : "+" + e.gap.toFixed(3) + " s") : e.gap === 0 ? "leader" : isFinite(e.gap) ? "+" + e.gap.toFixed(2) + " m" : "";
+    const chip = e.photo ? '<span class="chip photo">photo</span>' : `<span class="chip ${st}">${st === "coasting" ? "hidden" : st}</span>`;
+    return `<tr data-k="${e.i}" class="${W.selected === e.i ? "sel" : ""}"><td class="pos">${e.rank}</td><td class="dot"><i style="background:${b.hex}"></i></td><td>${b.name}</td>` +
+      `${W.T.closed ? `<td class="num">L${lapOf(e.i)}</td>` : ""}<td class="num">${gap}</td><td>${chip}</td><td class="num" title="True position">T${truthOrder.indexOf(e.i) + 1}</td></tr>`;
+  }).join("");
+}
+function renderHealth() {
+  const m = W.metrics, on = W.cams.filter((c) => W.tracker.online[c.id]).length;
+  const pct = (a, b) => (b ? (100 * a / b).toFixed(2) + "%" : "—");
+  $("health").innerHTML = [
+    ["Rank (strict)", pct(m.ok, m.evals)], ["Rank (100 ms)", pct(m.okLat, m.evals)], ["Phantom passes", `${m.phantom}/${m.shown}`],
+    ["ID errors", m.idErr], ["Position RMS", m.nsq ? (100 * Math.sqrt(m.sq / m.nsq)).toFixed(2) + " cm" : "—"], ["Cameras online", `${on}/${W.cams.length}`],
+  ].map(([k, v]) => `<div><span>${k}</span><strong>${v}</strong></div>`).join("");
+  [...$("camgrid").children].forEach((el, k) => el.classList.toggle("off", !W.tracker.online[W.cams[k].id]));
+}
+function buildCamGrid() {
+  $("camgrid").innerHTML = W.cams.map((c) => `<i title="${c.id}" data-id="${c.id}"></i>`).join("");
+}
+function renderTelemetry() {
+  const k = W.selected;
+  if (k == null) { $("selName").textContent = "—"; $("tele").innerHTML = ""; $("teleNote").textContent = "Click a marble or a row in the timing tower."; drawSpark(null); return; }
+  const b = W.phys.m[k], m = W.tracker.m[k], st = W.tracker.status(m, W.phys.t);
+  $("selName").textContent = b.name;
+  const err = m.t != null ? (m.x[0] - b.s) * 100 : null;
+  $("tele").innerHTML = [
+    ["Speed (true)", b.v.toFixed(2) + " m/s"], ["Speed (est.)", m.t != null ? m.x[1].toFixed(2) + " m/s" : "—"], ["Status", st],
+    ["Progress", (m.t != null ? m.x[0] : 0).toFixed(2) + " m"], ["Error", err != null ? err.toFixed(1) + " cm" : "—"], ["Seen by", m.lastCam || "—"],
+    ["Lateral", (b.d * 1000).toFixed(0) + " mm"], ["Height", W.T.sample(b.s).y.toFixed(2) + " m"], ["Finish", b.finishT != null ? (b.finishT - W.raceT0).toFixed(3) + " s" : "—"],
+  ].map(([x, v]) => `<div><span>${x}</span><strong>${v}</strong></div>`).join("");
+  $("teleNote").textContent = st === "coasting" ? "Hidden: the tracker predicts it through the blind zone and will not let it gain places until a camera sees it." :
+    st === "acquiring" ? "Just appeared: needs three sightings before its speed is trusted." : "Line: true speed. Dots: tracker's estimate. Last 10 s.";
+  drawSpark(k);
+}
+function drawSpark(k) {
+  const c = $("spark"), g = c.getContext("2d"); g.clearRect(0, 0, c.width, c.height);
+  if (k == null) return;
+  const h = W.speedHist[k]; if (h.length < 2) return;
+  const vmax = Math.max(0.5, ...h.map((x) => Math.abs(x[1]))) * 1.15, t0 = h[0][0], t1 = h[h.length - 1][0] || t0 + 1;
+  const X = (t) => (t - t0) / Math.max(1e-6, t1 - t0) * (c.width - 10) + 5, Y = (v) => c.height - 8 - (v / vmax) * (c.height - 16);
+  g.strokeStyle = "#29333f"; g.beginPath(); g.moveTo(0, Y(0)); g.lineTo(c.width, Y(0)); g.stroke();
+  g.strokeStyle = W.phys.m[k].hex; g.lineWidth = 3; g.beginPath(); h.forEach(([t, v], i) => (i ? g.lineTo(X(t), Y(v)) : g.moveTo(X(t), Y(v)))); g.stroke();
+  g.fillStyle = "#e6e9ee"; h.forEach(([t, , e], i) => { if (e != null && i % 3 === 0) g.fillRect(X(t) - 1.5, Y(e) - 1.5, 3, 3); });
+  g.fillStyle = "#8b97a7"; g.font = "18px IBM Plex Mono, monospace"; g.fillText(vmax.toFixed(1) + " m/s", 8, 20);
+}
+function logMsg(text, cls) {
+  const d = document.createElement("div"); d.textContent = text; if (cls) d.className = cls;
+  $("log").prepend(d); while ($("log").children.length > 80) $("log").lastChild.remove();
+}
+
+// ============================================================ minimap
+const mm = $("minimap"), mctx = mm.getContext("2d");
+function mmXform() {
+  const T = W.T; let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i <= T.N; i += 10) { x0 = Math.min(x0, T.px[i]); x1 = Math.max(x1, T.px[i]); z0 = Math.min(z0, T.pz[i]); z1 = Math.max(z1, T.pz[i]); }
+  const pad = 18, k = Math.min((mm.width - 2 * pad) / (x1 - x0 || 1), (mm.height - 2 * pad) / (z1 - z0 || 1));
+  return { k, ox: (mm.width - k * (x1 - x0)) / 2 - k * x0, oz: (mm.height - k * (z1 - z0)) / 2 - k * z0 };
+}
+function drawMinimap(frame) {
+  mm.hidden = !$("tMinimap").checked; if (mm.hidden) return;
+  const T = W.T, X = W.mmX || (W.mmX = mmXform()), P = (x, z) => [X.ox + X.k * x, X.oz + X.k * z];
+  mctx.clearRect(0, 0, mm.width, mm.height);
+  const tr = W.tracker, online = (c) => (frame ? frame.online[W.cams.indexOf(c)] : tr.online[c.id]);
+  for (let i = 0; i < T.N; i += 4) {  // colour each stretch by who sees it
+    const s = i * T.ds, j = Math.min(T.N, i + 4);
+    const seen = !T.inTunnel(s) && W.cams.some((c) => online(c) && c.covers(s) && !(c.kind === "overhead" && T.coveredAbove(s)));
+    const anyCover = W.cams.some((c) => c.covers(s) && c.kind !== "finish");
+    mctx.strokeStyle = T.inTunnel(s) ? "#7a4f2c" : seen ? "#4f8f62" : anyCover ? "#ef6b5e" : "#5a6370";
+    if (T.inLift(s)) mctx.strokeStyle = "#f2a93b";
+    mctx.lineWidth = 5; mctx.beginPath(); mctx.moveTo(...P(T.px[i], T.pz[i])); mctx.lineTo(...P(T.px[j], T.pz[j])); mctx.stroke();
+  }
+  const f = T.sample(T.finishS); mctx.fillStyle = "#fff"; mctx.fillRect(P(f.x, f.z)[0] - 3, P(f.x, f.z)[1] - 3, 6, 6);
+  W.phys.m.forEach((b, k) => {
+    const gone = frame ? frame.gone[k] : b.gone; if (gone) return;
+    const s = frame ? frame.s[k] : b.s, q = T.sample(s), [x, y] = P(q.x, q.z);
+    const est = frame ? frame.est[k] : tr.m[k].t != null ? tr.m[k].x[0] : null;
+    if (est != null) { const e = T.sample(est), [ex, ey] = P(e.x, e.z); mctx.strokeStyle = "#e6e9ee"; mctx.lineWidth = 1.5; mctx.beginPath(); mctx.arc(ex, ey, 7, 0, 7); mctx.stroke(); }
+    mctx.fillStyle = b.hex; mctx.beginPath(); mctx.arc(x, y, W.selected === k ? 7 : 5, 0, 7); mctx.fill();
+  });
+  mctx.fillStyle = "#8b97a7"; mctx.font = "16px IBM Plex Mono, monospace"; mctx.fillText(W.mdef.name, 10, 20);
+}
+mm.addEventListener("click", (e) => {
+  if (!W) return;
+  const r = mm.getBoundingClientRect(), X = W.mmX, x = ((e.clientX - r.left) / r.width * mm.width - X.ox) / X.k, z = ((e.clientY - r.top) / r.height * mm.height - X.oz) / X.k;
+  let best = 0, bd = Infinity; for (let i = 0; i <= W.T.N; i += 5) { const d = Math.hypot(W.T.px[i] - x, W.T.pz[i] - z); if (d < bd) { bd = d; best = i; } }
+  focusOn(new V3(W.T.px[best], W.T.py[best], W.T.pz[best]), 0.9);
+});
+function focusOn(p, dist) {
+  setViewMode("orbit");
+  const off = camera.position.clone().sub(controls.target).normalize().multiplyScalar(dist);
+  controls.target.copy(p); camera.position.copy(p).add(off); controls.update();
+}
+
+// ============================================================ interaction
+function selectMarble(k) { if (!W) return; W.selected = k; }
+$("tower").addEventListener("click", (e) => { const tr = e.target.closest("tr"); if (tr) { selectMarble(+tr.dataset.k); if (viewMode === "orbit") setViewMode("selected"); } });
+$("camgrid").addEventListener("click", (e) => { const id = e.target.dataset && e.target.dataset.id; if (!id) return; const c = W.cams.find((c) => c.id === id); c.online = !c.online; logMsg(`${fmtT(W.phys.t)} ${id} ${c.online ? "restored" : "unplugged"} by operator`, c.online ? "ok" : "bad"); });
+document.querySelectorAll("#tools [data-view]").forEach((b) => b.addEventListener("click", () => { zoomF = 1; $("zoom").value = 0; setViewMode(b.dataset.view); }));
+$("fit").addEventListener("click", () => fitView(true));
+$("zin").addEventListener("click", () => zoomBy(1.25)); $("zout").addEventListener("click", () => zoomBy(0.8));
+$("zoom").addEventListener("input", (e) => { const target = Math.pow(6, +e.target.value / 100); zoomBy(target / zoomF); });
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
+renderer.domElement.addEventListener("pointerdown", (e) => (downAt = [e.clientX, e.clientY]));
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !W) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(mouse, camera);
+  const hits = ray.intersectObjects(W.meshes.map((m) => m.sphere));
+  if (hits.length) selectMarble(hits[0].object.userData.k);
+});
+renderer.domElement.addEventListener("dblclick", (e) => {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(mouse, camera);
+  const hits = ray.intersectObjects(W.root.children.filter((o) => o.isMesh).concat([ground]));
+  if (hits.length) focusOn(hits[0].point, Math.max(0.3, camera.position.distanceTo(hits[0].point) * 0.45));
+});
+function applyToggles() {
+  if (!W) return;
+  W.camGroup.visible = $("tFrustums").checked; W.centerline.visible = $("tWaypoints").checked;
+  $("feedOverlay").hidden = !$("tFeeds").checked;
+}
+["tLabels", "tBoxes", "tTrails", "tFrustums", "tFeeds", "tMinimap", "tWaypoints"].forEach((id) => $(id).addEventListener("change", applyToggles));
+$("play").addEventListener("click", togglePlay);
+function togglePlay() { playing = !playing; $("play").textContent = playing ? "Pause" : "Resume"; }
+$("speed").addEventListener("change", (e) => (speed = +e.target.value));
+function newRace(seed) { exitReplay(); $("banner").hidden = true; buildWorld(seed ?? Math.floor(Math.random() * 1e9)); W.mmX = null; if (!playing) togglePlay(); }
+$("newRace").addEventListener("click", () => newRace());
+$("restart").addEventListener("click", () => newRace(W.seed));
+["map", "count", "laps", "rig", "chaos"].forEach((id) => $(id).addEventListener("change", () => newRace(W.seed)));
+$("fCam").addEventListener("click", () => {
+  const board = W.tracker.leaderboard(W.phys.t), lead = (board.find((e) => e.status !== "finished") || board[0]).i;
+  const c = W.cams.find((c) => c.online && c.kind !== "finish" && c.covers(W.phys.m[lead].s)) || W.cams.find((c) => c.online);
+  if (c) { c.online = false; logMsg(`${fmtT(W.phys.t)} fault: ${c.id} unplugged`, "bad"); }
+});
+$("fLight").addEventListener("click", () => { W.faults.dim = !W.faults.dim; $("fLight").classList.toggle("on", W.faults.dim); sun.intensity = W.faults.dim ? 0.45 : 0.95; logMsg(`${fmtT(W.phys.t)} fault: lights ${W.faults.dim ? "dimmed" : "restored"}`, W.faults.dim ? "bad" : "ok"); });
+$("fNet").addEventListener("click", () => { W.faults.jitter = !W.faults.jitter; $("fNet").classList.toggle("on", W.faults.jitter); logMsg(`${fmtT(W.phys.t)} fault: network ${W.faults.jitter ? "dropping 12 % of frames" : "healthy"}`, W.faults.jitter ? "bad" : "ok"); });
+$("fReset").addEventListener("click", () => { W.cams.forEach((c) => (c.online = true)); W.faults = { dim: false, jitter: false }; sun.intensity = 0.95; $("fLight").classList.remove("on"); $("fNet").classList.remove("on"); logMsg(`${fmtT(W.phys.t)} all faults cleared`, "ok"); });
+$("replay").addEventListener("click", () => (replayMode ? exitReplay() : enterReplay()));
+function enterReplay() {
+  if (!W.replay.length) return;
+  replayMode = true; $("replay").classList.add("on"); $("replay").textContent = "Back to live";
+  $("scrub").disabled = false; $("scrub").max = W.replay.length - 1; replayIdx = Math.max(0, W.replay.length - 150); $("scrub").value = replayIdx;
+  logMsg("Instant replay: drag the slider, or press play for slow motion", "");
+}
+function exitReplay() { replayMode = false; $("replay").classList.remove("on"); $("replay").textContent = "Instant replay"; $("scrub").disabled = true; }
+$("scrub").addEventListener("input", (e) => (replayIdx = +e.target.value));
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  const k = e.key;
+  if (k === " ") { e.preventDefault(); togglePlay(); }
+  else if (k === "r" || k === "R") newRace(W.seed);
+  else if (k === "n" || k === "N") newRace();
+  else if (k === "+" || k === "=") zoomBy(1.25);
+  else if (k === "-" || k === "_") zoomBy(0.8);
+  else if (k === "f" || k === "F") setViewMode("selected");
+  else if (k === "v" || k === "V") { const order = ["orbit", "leader", "tv", "overhead", "finish"]; setViewMode(order[(order.indexOf(viewMode) + 1) % order.length]); }
+  else if (k === "[" || k === "]") { const b = W.tracker.leaderboard(W.phys.t).map((x) => x.i), i = b.indexOf(W.selected); selectMarble(b[(i + (k === "]" ? 1 : -1) + b.length) % b.length]); }
+  else if (/^[1-5]$/.test(k)) { $("map").value = Object.keys(MAPS)[+k - 1]; newRace(W.seed); }
+});
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false); renderer.domElement.style.width = w + "px"; renderer.domElement.style.height = h + "px";
+  labelRenderer.setSize(w, h); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+  const dpr = Math.min(2, window.devicePixelRatio || 1); feedCanvas.width = w * dpr; feedCanvas.height = h * dpr; feedCanvas.style.width = w + "px"; feedCanvas.style.height = h + "px";
+}
+new ResizeObserver(resize).observe(view);
+
+let uiAcc = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const dt = lastTs == null ? 0 : Math.min(0.05, (ts - lastTs) / 1000); lastTs = ts;
+  let frame = null;
+  if (replayMode) {
+    if (playing) { replayIdx = Math.min(W.replay.length - 1, replayIdx + dt * 30 * Math.min(speed, 0.5)); $("scrub").value = Math.floor(replayIdx); }
+    frame = W.replay[Math.floor(replayIdx)];
+    $("clock").textContent = "REPLAY " + (frame.t - (W.raceT0 ?? 0)).toFixed(2) + " s";
+  } else if (playing) {
+    if (W.state === "grid") updateLights(dt);
+    else simulate(dt * speed);
+    $("clock").textContent = W.state === "grid" ? "GRID" : Math.max(0, W.phys.t - (W.raceT0 ?? W.phys.t)).toFixed(2) + " s";
+  }
+  updateScene(dt, frame);
+  updateCamera(dt);
+  if (viewMode === "orbit") controls.update();
+  render();
+  uiAcc += dt;
+  if (uiAcc > 0.1) { uiAcc = 0; renderTower(frame); renderHealth(); renderTelemetry(); drawMinimap(frame); }
+}
+
+// ============================================================ boot
+Object.entries(MAPS).forEach(([k, m], i) => { const o = document.createElement("option"); o.value = k; o.textContent = `${i + 1}. ${m.name}`; $("map").append(o); });
+$("map").value = location.hash && MAPS[location.hash.slice(1)] ? location.hash.slice(1) : "grandprix";
+resize();
+buildWorld(20261014);
+requestAnimationFrame(loop);
+</script>

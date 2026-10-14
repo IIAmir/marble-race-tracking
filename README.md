@@ -7,7 +7,8 @@ occlusion handling and a live leaderboard.
 
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 * **Production-readiness report:** [`docs/readiness-report.html`](docs/readiness-report.html)
-* **Interactive 3D replay:** [`demo/track3d.html`](demo/track3d.html) (open in a browser)
+* **Live race simulator:** [`demo/simulator.html`](demo/simulator.html), open in a browser (see below)
+* **Interactive 3D replay** of recorded pipeline output: [`demo/track3d.html`](demo/track3d.html)
 
 ## How it works in one paragraph
 
@@ -23,6 +24,34 @@ with a colour ratio test), runs one Kalman filter per marble on `[s, v]`,
 coasts hidden marbles only through known blind zones (tunnels, camera gaps,
 failed cameras), times the finish with a least-squares fit around the line and
 publishes a leaderboard in which no marble can gain a place while unseen.
+
+## Live race simulator (`demo/simulator.html`)
+
+A self-contained browser app that simulates races live and tracks them live:
+
+* **Physics**: marbles roll under gravity (5/7 g·slope for a rolling sphere) with rolling
+  resistance, drag, wall rubbing in corners, track-joint bumps, marble-to-marble collisions and
+  per-marble grip that varies along the track (the *Chaos* setting).
+* **Five maps**: Serpentine Table, Alpine Descent (hairpins, three tunnels), Spiral Tower (stacked
+  levels the overhead camera cannot see), Figure-Eight Bridge and Grand Prix (lap races with a
+  chain lift).
+* **Camera rigs**: 14 cameras at ~45°, one overhead camera, or both, plus a 240 fps finish camera.
+  A simulated detector produces what each camera's edge node would report (resolution-dependent
+  noise, occlusion by tunnels, other track levels and other marbles, colour noise).
+* **Tracker**: a JavaScript port of `marbletrack/fusion.py` (colour + motion assignment with the
+  Hungarian algorithm, Kalman filter on track progress, blind zones, camera health, confirmed
+  overtakes, least-squares finish timing, photo-finish flags), scored against the physics live.
+  It adds one refinement found by fault-injection testing: a marble re-acquired after a long gap
+  restarts from its average speed across the gap and must be seen three times before it can gain
+  places.
+* **Views**: free orbit with zoom (wheel, buttons, slider, double-click to focus), follow leader,
+  follow selected, a TV director that cuts between rig cameras, overhead, finish camera; live
+  camera feeds with detection boxes; a clickable minimap coloured by camera coverage.
+* **Race control**: F1 start lights, marble count, laps, chaos, speed and slow motion, instant
+  replay with scrubber, fault injection (kill camera, dim lights, network jitter), timing tower
+  with true positions, telemetry, live tracker-vs-truth metrics, palette separation check.
+* **Keys**: Space pause · R restart · N new race · 1–5 map · V cycle view · F follow selected ·
+  +/− zoom · [ ] previous/next marble.
 
 ## Quick start
 
