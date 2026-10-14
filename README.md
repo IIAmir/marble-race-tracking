@@ -1,12 +1,12 @@
 # Marble Race Tracking
 
 Real-time identification, tracking and ranking of colour-coded marbles from
-**one top-down master camera** or **14 fixed track cameras** (plus an optional
-high-frame-rate finish camera), with multi-camera fusion, occlusion handling
-and a live leaderboard.
+**14 fixed track cameras mounted at about 45°** or **one overhead master
+camera**, plus a high-frame-rate finish camera, with multi-camera fusion,
+occlusion handling and a live leaderboard.
 
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-* **Stakeholder feasibility report:** [`docs/feasibility-report.html`](docs/feasibility-report.html)
+* **Production-readiness report:** [`docs/readiness-report.html`](docs/readiness-report.html)
 * **Interactive 3D replay:** [`demo/track3d.html`](demo/track3d.html) (open in a browser)
 
 ## How it works in one paragraph
@@ -14,7 +14,9 @@ and a live leaderboard.
 Each camera subtracts the empty-track background, classifies foreground pixels
 against per-camera CIELAB colour models (one per marble), groups pixels by
 *(connected component, colour)* and projects each blob onto a calibrated
-centerline whose waypoints carry track progress `s`. Only these detections
+centerline whose waypoints carry track progress `s` (calibrated at
+marble-centre height, with per-waypoint cross-track directions so that the
+skew of an angled view does not shift progress). Only these detections
 (a few hundred bytes per frame) leave the camera's edge node. A central fusion
 engine assigns detections to marbles by colour and motion (Hungarian algorithm
 with a colour ratio test), runs one Kalman filter per marble on `[s, v]`,
@@ -34,8 +36,9 @@ python -m marbletrack.edgecases                     # F1-grade edge cases, one r
 
 python scripts/monte_carlo.py --seeds 10           # full stress suite      -> results/monte_carlo.json
 python scripts/benchmark.py                        # detector cost per frame -> results/benchmark.json
+python scripts/angled_accuracy.py                  # angled-view geometry    -> results/angled_projection.json
 python scripts/export_replays.py && python scripts/build_demo3d.py   # 3D replay page
-python scripts/build_report.py                     # feasibility report from the results
+python scripts/build_report.py                     # production-readiness report from the results
 ```
 
 ## Layout
@@ -47,7 +50,8 @@ python scripts/build_report.py                     # feasibility report from the
 | `marbletrack/detector.py` | Edge detector (background, colour classification, grouping, projection, adaptation) |
 | `marbletrack/fusion.py` | Association, Kalman filtering, blind zones, camera health, finish timing, leaderboard |
 | `marbletrack/runtime.py` | Multi-process real-time runtime and HTTP/JSON leaderboard publisher |
-| `marbletrack/sim.py` | Race simulator and virtual camera rigs (master, 14 segments, finish) |
+| `marbletrack/sim.py` | Race simulator, overhead and planar camera rigs |
+| `marbletrack/sim3d.py` | 3D pinhole cameras at ~45° with depth buffer: walls, tunnels, perspective, occlusion |
 | `marbletrack/race.py`, `marbletrack/edgecases.py` | Scenarios, scripted edge cases, ground-truth scoring |
 | `scripts/` | Stress suite, benchmark, live demo, video/3D/report builders |
 | `results/` | Measured outputs used by the report |

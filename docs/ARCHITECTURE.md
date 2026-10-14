@@ -3,8 +3,8 @@
 Real-time identification, tracking and ranking of colour-coded marbles, from
 either **one top-down master camera** or **14 fixed cameras** along the track,
 plus an optional high-frame-rate **finish camera**. This document is the
-engineering reference; the stakeholder summary with evidence is
-[`docs/feasibility-report.html`](feasibility-report.html) and the measured numbers
+engineering reference; the stakeholder readiness report with evidence is
+[`docs/readiness-report.html`](readiness-report.html) and the measured numbers
 are in [`results/`](../results).
 
 ---
@@ -366,7 +366,7 @@ not affect order and is removed by one light-gate calibration run.
 
 All numbers are produced by the code in this repository; re-run with the
 commands in the README. The full stakeholder report with charts is
-[`docs/feasibility-report.html`](feasibility-report.html).
+[`docs/readiness-report.html`](readiness-report.html).
 
 <!-- RESULTS:START -->
 _Filled in from `results/monte_carlo.json` and `results/benchmark.json`._
