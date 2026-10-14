@@ -7,6 +7,9 @@ occlusion handling and a live leaderboard.
 
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 * **Production-readiness report:** [`docs/readiness-report.html`](docs/readiness-report.html)
+* **Windows app for the venue PC** (camera discovery, setup wizard, live tracking, WebSocket leaderboard
+  streaming): [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md). Run with `python -m marbletrack_app --demo`, or build
+  `MarbleTrack.exe` with `windows\build.ps1`
 * **Live race simulator:** [`demo/simulator.html`](demo/simulator.html), open in a browser (see below)
 * **Interactive 3D replay** of recorded pipeline output: [`demo/track3d.html`](demo/track3d.html)
 
@@ -100,6 +103,8 @@ python scripts/build_report.py                     # production-readiness report
 | `marbletrack/detector.py` | Edge detector (background, colour classification, grouping, projection, adaptation) |
 | `marbletrack/fusion.py` | Association, Kalman filtering, blind zones, camera health, finish timing, leaderboard |
 | `marbletrack/runtime.py` | Multi-process real-time runtime and HTTP/JSON leaderboard publisher |
+| `marbletrack_app/` | Windows desktop app: cameras, setup wizard, live runtime, WebSocket client, UI ([guide](docs/WINDOWS_APP.md)) |
+| `windows/` | PyInstaller spec, build script, installer, icon |
 | `marbletrack/sim.py` | Race simulator, overhead and planar camera rigs |
 | `marbletrack/sim3d.py` | 3D pinhole cameras at ~45° with depth buffer: walls, tunnels, perspective, occlusion |
 | `marbletrack/race.py`, `marbletrack/edgecases.py` | Scenarios, scripted edge cases, ground-truth scoring |

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarbleTrack</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="var(--accent)"/><circle cx="9" cy="9" r="2.6" fill="#fff" opacity=".85"/></svg><span>MarbleTrack</span></div>
+    <div class="project" id="projectName" title=""></div>
+    <div class="bar-mid" id="barMid"></div>
+    <div class="bar-right">
+      <span class="saved" id="saved" aria-live="polite"></span>
+      <span class="mode" id="modePill"></span>
+    </div>
+  </header>
+
+  <!-- setup -->
+  <nav class="rail" id="rail" aria-label="Setup steps"></nav>
+  <main class="main" id="main" tabindex="-1"></main>
+  <footer class="foot" id="foot"></footer>
+
+  <!-- live -->
+  <section class="live" id="live" hidden></section>
+</div>
+
+<div class="toaster" id="toaster" aria-live="polite" aria-atomic="false"></div>
+<div class="pop" id="pop" hidden role="dialog" aria-modal="false"></div>
+<canvas class="loupe" id="loupe" width="168" height="168" hidden aria-hidden="true"></canvas>
+<script src="app.js"></script>
+</body>
+</html>

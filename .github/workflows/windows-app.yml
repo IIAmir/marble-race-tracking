@@ -1,0 +1,46 @@
+name: Windows app
+
+on:
+  push:
+    paths: ["marbletrack/**", "marbletrack_app/**", "windows/**", "tests/**", ".github/workflows/windows-app.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r windows/requirements-windows.txt pytest hypothesis
+      - name: Unit tests
+        run: python -m pytest -q -m "not slow"
+      - name: Build MarbleTrack.exe
+        run: |
+          python windows/make_icon.py
+          python -m PyInstaller --noconfirm --clean --distpath dist --workpath build windows/MarbleTrack.spec
+      - name: Self-test the built exe (demo cameras, camera processes, WebSocket streaming)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\MarbleTrack\MarbleTrack.exe -ArgumentList "--selftest","--selftest-out","dist\selftest.json" -Wait -PassThru
+          Get-Content dist\selftest.json
+          if ($p.ExitCode -ne 0) { Get-ChildItem "$env:APPDATA\MarbleTrack\logs" -ErrorAction SilentlyContinue | Get-Content -Tail 80; exit 1 }
+      - name: Installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc windows\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MarbleTrack-windows
+          path: |
+            dist/MarbleTrack-Setup-*.exe
+            dist/MarbleTrack/
+            dist/selftest.json
