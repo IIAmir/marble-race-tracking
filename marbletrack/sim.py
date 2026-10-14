@@ -113,11 +113,35 @@ class RaceSimulator:
     def progress(self, t: float) -> np.ndarray:
         return np.array([np.interp(t, self.times, self.traj[:, k]) for k in range(len(self.marbles))])
 
+    @classmethod
+    def scripted(cls, track, marbles, cfg, times, traj, lateral) -> "RaceSimulator":
+        """Race with explicit trajectories: ``traj`` and ``lateral`` are (T, K) arrays."""
+        sim = cls.__new__(cls)
+        sim.track, sim.marbles, sim.cfg = track, marbles, cfg
+        sim.times, sim.traj = np.asarray(times, float), np.asarray(traj, float)
+        sim._lat = np.asarray(lateral, float)
+        sim.duration = float(sim.times[-1])
+        return sim
+
     def lateral(self, t: float) -> np.ndarray:
+        if getattr(self, "_lat", None) is not None:
+            return np.array([np.interp(t, self.times, self._lat[:, k]) for k in range(len(self.marbles))])
         return self.cfg.lateral_amp * np.sin(2 * np.pi * t / self._lat_period + self._lat_phase)
 
     def finish_times(self, s_finish: float) -> np.ndarray:
-        return np.array([np.interp(s_finish, self.traj[:, k], self.times) for k in range(len(self.marbles))])
+        """First crossing of the finish line (a marble may slip back over it)."""
+        out = []
+        for k in range(len(self.marbles)):
+            s = self.traj[:, k]
+            i = int(np.argmax(s >= s_finish))
+            if s[i] < s_finish:
+                out.append(np.inf)
+            elif i == 0:
+                out.append(float(self.times[0]))
+            else:
+                f = (s_finish - s[i - 1]) / (s[i] - s[i - 1])
+                out.append(float(self.times[i - 1] + f * (self.times[i] - self.times[i - 1])))
+        return np.array(out)
 
     def world_positions(self, t: float):
         s = self.progress(t)
@@ -211,10 +235,14 @@ class SimCamera:
             out = cv2.convertScaleAbs(out, alpha=illumination)
         return out
 
-    def calibration(self, marbles: list[MarbleSpec], sim: RaceSimulator) -> CameraCalibration:
-        """What the on-site calibration tool would produce for this camera."""
+    def calibration(self, marbles: list[MarbleSpec], sim: RaceSimulator, s_bias: float = 0.0) -> CameraCalibration:
+        """What the on-site calibration tool would produce for this camera.
+
+        ``s_bias`` shifts this camera's progress values, emulating a centerline
+        calibration that disagrees with its neighbours.
+        """
         line = self.track.section(*self.s_range)
-        img_line = Polyline(_apply_h(self.H, line.points), line.s)
+        img_line = Polyline(_apply_h(self.H, line.points), line.s + s_bias)
         mid = line.points[len(line.points) // 2]
         scale = self.scale_at(mid)
         mask = np.zeros(self.size[::-1], np.uint8)

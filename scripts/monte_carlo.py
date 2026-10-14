@@ -15,11 +15,14 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from marbletrack.edgecases import EDGE_CASES, run_edge_case  # noqa: E402
 from marbletrack.race import SCENARIOS, run_race  # noqa: E402
 
 
 def _job(args):
     scenario, mode, seed, finish_cam = args
+    if scenario.startswith("edge:"):
+        return {"edge": True, **run_edge_case(scenario[5:], mode, seed)}
     r = run_race(mode, seed=seed, scenario=scenario, finish_cam=finish_cam)
     d = asdict(r)
     d.pop("replay")
@@ -63,10 +66,17 @@ def main():
     jobs = [(name, mode, seed, True) for name, sc in SCENARIOS.items() for mode in sc.modes
             for seed in range(a.seeds)]
     jobs += [("nominal", mode, seed, False) for mode in ("single", "multi") for seed in range(a.seeds)]
+    jobs += [(f"edge:{name}", mode, seed, True) for name, sc in EDGE_CASES.items() for mode in sc.modes
+             for seed in range(a.seeds)]
     t0 = time.time()
-    rows = []
+    rows, edges = [], []
     with Pool(a.workers) as pool:
         for i, row in enumerate(pool.imap_unordered(_job, jobs), 1):
+            if row.get("edge"):
+                edges.append(row)
+                print(f"[{i}/{len(jobs)} {time.time() - t0:.0f}s] edge {row['case']}/{row['mode']} seed {row['seed']}: "
+                      f"rank {row['rank_accuracy']:.3f} id_err {row['id_errors']}", flush=True)
+                continue
             rows.append(row)
             print(f"[{i}/{len(jobs)} {time.time() - t0:.0f}s] {row['scenario']}/{row['mode']}"
                   f"{'' if row['finish_cam'] else '/no-finish-cam'} seed {row['seed']}: "
@@ -75,7 +85,8 @@ def main():
                   f"id_err {row['id_errors']}", flush=True)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     rows.sort(key=lambda r: (r["scenario"], r["mode"], r["finish_cam"], r["seed"]))
-    Path(a.out).write_text(json.dumps({"summary": summarize(rows), "runs": rows,
+    edges.sort(key=lambda r: (r["case"], r["mode"], r["seed"]))
+    Path(a.out).write_text(json.dumps({"summary": summarize(rows), "runs": rows, "edge_cases": edges,
                                        "wall_time_s": time.time() - t0}, indent=1, default=float))
     for s in summarize(rows):
         print(s)

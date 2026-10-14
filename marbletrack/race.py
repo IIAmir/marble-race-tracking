@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 
@@ -28,6 +29,10 @@ class Scenario:
     frame_drop: float = 0.0  # probability a frame never reaches the fusion host
     net_delay: tuple[float, float] = (0.005, 0.03)  # edge -> fusion delivery delay (s)
     outages: tuple[tuple[int, float, float], ...] = ()  # (camera index, t_off, t_on)
+    script: Callable | None = None  # (track, cfg, rng) -> (times, traj, lateral) scripted race
+    overlap: float = 0.12  # camera overlap (multi-camera rig)
+    calib_bias: float = 0.0  # 1-sigma per-camera centerline calibration error (m)
+    fps: float | None = None  # segment camera frame rate override
 
 
 SCENARIOS = {
@@ -110,17 +115,24 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
     colors = [m.bgr for m in marbles]
     track = serpentine_track(cfg)
     L = track.s_range[1]
-    sim = RaceSimulator(track, marbles, cfg, seed=seed)
-    cams = single_camera_rig(track, cfg, seed) if mode == "single" else multi_camera_rig(track, cfg, seed=seed, fps=fps)
+    fps = sc.fps or fps
+    if sc.script is not None:
+        sim = RaceSimulator.scripted(track, marbles, cfg, *sc.script(track, cfg, np.random.default_rng(seed)))
+    else:
+        sim = RaceSimulator(track, marbles, cfg, seed=seed)
+    cams = (single_camera_rig(track, cfg, seed) if mode == "single"
+            else multi_camera_rig(track, cfg, seed=seed, fps=fps, overlap=sc.overlap))
     s_finish = L - cfg.finish_before_end
     if finish_cam:
         cams.append(finish_camera(track, cfg, s_finish, seed))
-    detectors = {c.cam_id: ColorDetector(c.calibration(marbles, sim)) for c in cams}
+    bias_rng = np.random.default_rng(seed + 11)
+    detectors = {c.cam_id: ColorDetector(c.calibration(marbles, sim, s_bias=float(bias_rng.normal(0, sc.calib_bias))))
+                 for c in cams}
 
     # Timing resolution: ~1 ms with a 240 fps finish camera, ~5 ms at 30 fps.
     engine = FusionEngine(ids, s_finish, L, cameras={c.cam_id: c.s_range for c in cams},
                           static_blind_zones=list(cfg.tunnels), rank_margin=cfg.marble_radius,
-                          photo_finish_s=0.002 if finish_cam else 0.006)
+                          photo_finish_s=0.0005 if finish_cam else 0.006)
     buf = ReorderBuffer(latency=0.05)
     rng = np.random.default_rng(seed + 7)
     truth_finish = sim.finish_times(s_finish)
@@ -224,9 +236,10 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
         truth_finish[ids.index(a.marble_id)] <= truth_finish[ids.index(b.marble_id)]
         or (a.photo_finish and b.photo_finish)
         for a, b in zip(board, board[1:])
-    ) and all(e.status == "finished" for e in board)
+    ) and all(e.status == "finished" or not np.isfinite(truth_finish[ids.index(e.marble_id)]) for e in board)
     est = {e.marble_id: e.finish_time for e in board}
-    errs = np.array([abs(est[i] - truth_finish[ids.index(i)]) * 1e3 if est[i] is not None else np.inf for i in ids])
+    errs = np.array([abs(est[i] - truth_finish[ids.index(i)]) * 1e3 if est[i] is not None else
+                     (0.0 if not np.isfinite(truth_finish[ids.index(i)]) else np.inf) for i in ids])
     if replay is not None:
         replay.update(
             ids=ids,
@@ -243,6 +256,8 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
             cam_ids=[c.cam_id for c in cams],
             truth_finish=[float(v) for v in truth_finish],
             est_finish=[est[i] for i in ids],
+            finish_sigma=[m.finish_sigma for m in engine.marbles],
+            photo=[next(e.photo_finish for e in board if e.marble_id == i) for i in ids],
         )
     return RaceReport(
         scenario=sc.name,

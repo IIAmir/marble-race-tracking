@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import heapq
 import itertools
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -27,6 +28,11 @@ class MarbleState:
     last_obs_cam: str | None = None
     finish_time: float | None = None
     finish_sigma: float = 0.0  # 1-sigma uncertainty of finish_time (s)
+    finish_final: bool = False  # provisional until the refinement window has passed
+    finish_pending_until: float = 0.0
+    history: deque = field(default_factory=lambda: deque(maxlen=48))  # raw (t, s, var_px)
+    maneuver_until: float = -1.0  # boosted process noise after a surprising measurement
+    placed: bool = False  # inserted into the leaderboard order
     n_obs: int = 0
 
     @property
@@ -98,11 +104,18 @@ class FusionEngine:
         color_margin: float = 20.0,
         free_coast_time: float = 0.15,
         coast_tolerance: float = 0.05,
-        tracking_timeout: float = 0.2,
+        tracking_timeout: float = 0.1,
         lost_after: float = 1.5,
         camera_timeout: float = 0.3,
         rank_margin: float = 0.012,
         photo_finish_s: float = 0.002,
+        photo_finish_k: float = 3.0,
+        rank_k: float = 2.0,
+        rank_confirm: float = 0.1,
+        finish_window: float = 0.03,
+        maneuver_nis: float = 9.0,
+        maneuver_boost: float = 25.0,
+        maneuver_time: float = 0.15,
     ):
         self.marbles = [MarbleState(m, i) for i, m in enumerate(marble_ids)]
         self.s_finish = s_finish
@@ -121,6 +134,12 @@ class FusionEngine:
         self.camera_timeout = camera_timeout
         self.rank_margin = rank_margin
         self.photo_finish_s = photo_finish_s
+        self.photo_finish_k = photo_finish_k
+        self.rank_k = rank_k
+        self.rank_confirm = rank_confirm
+        self._lead_since: dict[tuple[int, int], float] = {}
+        self.finish_window = finish_window
+        self.maneuver_nis, self.maneuver_boost, self.maneuver_time = maneuver_nis, maneuver_boost, maneuver_time
         self._order = list(range(len(marble_ids)))
         self._last_frame: dict[str, float] = {}
         self._online: dict[str, bool] = {c: True for c in self.cameras}
@@ -165,7 +184,10 @@ class FusionEngine:
         if dt <= 0:  # late / simultaneous measurement: update at current state
             return
         F = np.array([[1.0, dt], [0.0, 1.0]])
-        Q = self.q * np.array([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
+        # Bounces and back-slips are short, violent accelerations: while one is
+        # suspected the filter trusts the model less and follows the measurements.
+        q = self.q * (self.maneuver_boost if t <= m.maneuver_until else 1.0)
+        Q = q * np.array([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
         m.x = F @ m.x
         m.P = F @ m.P @ F.T + Q
         m.t = t
@@ -206,9 +228,15 @@ class FusionEngine:
             m.t = t
         else:
             H, y, S = self._innovation(m, t, s, r)
+            if y * y / S > self.maneuver_nis:
+                m.maneuver_until = t + self.maneuver_time
+                # Re-open the velocity uncertainty so this very update can follow.
+                m.P = m.P + np.diag([0.0, self.q * self.maneuver_boost * self.maneuver_time / 4])
+                H, y, S = self._innovation(m, t, s, r)
             K = m.P @ H / S
             m.x = m.x + K * y
             m.P = (np.eye(2) - np.outer(K, H)) @ m.P
+        m.history.append((t, s, max(r_px, 1e-10)))
         if m.last_obs_t is not None and t <= m.last_obs_t:
             m.n_obs += 1
             return  # late measurement: improves the state, but is not the newest observation
@@ -218,16 +246,81 @@ class FusionEngine:
             m.finish_time = m.last_obs_t + f * (t - m.last_obs_t)
             speed = (s - m.last_obs_s) / max(t - m.last_obs_t, 1e-6)
             m.finish_sigma = float(np.sqrt((1 - f) ** 2 * m.last_obs_r_px + f**2 * r_px) / speed)
+            m.finish_pending_until = m.finish_time + self.finish_window
             self.events.append(RaceEvent(t, "finish", m.marble_id, f"{m.finish_time:.4f}"))
         m.last_obs_t, m.last_obs_s, m.last_obs_v, m.last_obs_r_px = t, s, float(m.x[1]), r_px
         m.last_obs_cam = cam_id
         m.n_obs += 1
+
+    def _refine_finish(self, m: MarbleState) -> None:
+        """Replace the two-frame interpolation by a weighted least-squares fit.
+
+        All raw observations within ``finish_window`` of the provisional crossing
+        are fitted with s(t) = b0 + b1*dt + b2*dt^2 (quadratic when >= 6 points),
+        weighted by their pixel variances. The crossing is the root of
+        s(t) = s_finish near dt = 0, and its variance is propagated from the fit
+        covariance (scaled up by the reduced chi^2 when residuals exceed the
+        stated noise), so finish_sigma is an honest 1-sigma.
+        """
+        m.finish_final = True
+        t0 = m.finish_time
+        pts = sorted(p for p in m.history if abs(p[0] - t0) <= self.finish_window)
+        if len(pts) < 4 or pts[0][0] > t0 or pts[-1][0] < t0:
+            return
+        t, s, var = (np.array(c) for c in zip(*pts))
+        dt = t - t0
+        deg = 2 if len(pts) >= 6 else 1
+        X = np.vander(dt, deg + 1, increasing=True)
+        W = 1.0 / var
+        A = X.T @ (X * W[:, None])
+        try:
+            cov = np.linalg.inv(A)
+        except np.linalg.LinAlgError:
+            return
+        beta = cov @ (X.T @ (W * s))
+        dof = len(pts) - deg - 1
+        if dof > 0:
+            chi2 = float(W @ (s - X @ beta) ** 2) / dof
+            cov = cov * max(1.0, chi2)
+        tau = 0.0
+        for _ in range(8):  # Newton on b0 + b1 tau + b2 tau^2 = s_finish
+            g = np.polyval(beta[::-1], tau) - self.s_finish
+            dg = beta[1] + (2 * beta[2] * tau if deg == 2 else 0.0)
+            if dg <= 0:
+                return
+            tau -= g / dg
+        if abs(tau) > self.finish_window:
+            return
+        dg = beta[1] + (2 * beta[2] * tau if deg == 2 else 0.0)
+        J = -np.array([tau**k for k in range(deg + 1)]) / dg
+        m.finish_time = t0 + float(tau)
+        m.finish_sigma = float(np.sqrt(J @ cov @ J))
+        self.events.append(RaceEvent(self.now, "finish_confirmed", m.marble_id,
+                                     f"{m.finish_time:.5f} +/- {m.finish_sigma * 1e3:.2f} ms"))
+
+    def _settle_finishes(self) -> None:
+        for m in self.marbles:
+            if m.finish_time is not None and not m.finish_final and self.now >= m.finish_pending_until:
+                self._refine_finish(m)
 
     def _r(self, det: Detection, cand) -> float:
         # Pixel noise alone understates the error: overlapping cameras disagree
         # by ~1 cm (calibration, parallax of the marble centre above the track,
         # partial occlusion), and treating that as motion corrupts velocity.
         return det.sigma_s(cand) ** 2 + self.r_floor
+
+    def _sanitize(self, d: Detection) -> Detection | None:
+        """Corrupt input (NaN/inf, wrong palette size) must never reach the filter."""
+        if len(d.color_d2) != len(self.marbles) or not np.all(np.isfinite(d.color_d2)):
+            return None
+        if not (np.isfinite(d.sigma_px) and d.sigma_px > 0):
+            return None
+        cands = [c for c in d.candidates if np.isfinite(c.s) and np.isfinite(c.s_per_unit) and c.s_per_unit > 0]
+        if not cands:
+            return None
+        if len(cands) != len(d.candidates):
+            d = replace(d, candidates=cands)
+        return d
 
     # -- association -------------------------------------------------------
     def process(self, t: float, detections: list[Detection], cam_id: str | None = None) -> None:
@@ -236,6 +329,9 @@ class FusionEngine:
         Call it for every frame, including frames with no detections: the call
         doubles as the camera's heartbeat.
         """
+        if not np.isfinite(t):
+            return
+        detections = [d for d in map(self._sanitize, detections) if d is not None]
         self.now = max(self.now, t)
         if cam_id is not None:
             self._last_frame[cam_id] = max(t, self._last_frame.get(cam_id, t))
@@ -280,11 +376,13 @@ class FusionEngine:
         for i, j in zip(rows, cols):
             if cost[i, j] < _INF:
                 self._update(self.marbles[j], t, *choice[i, j], cam_id=cam_id)
+        self._settle_finishes()
 
     def tick(self, now: float) -> None:
         """Advance the clock without measurements (detects silent cameras)."""
         self.now = max(self.now, now)
         self._check_health()
+        self._settle_finishes()
 
     # -- ranking -----------------------------------------------------------
     def status(self, m: MarbleState, now: float) -> str:
@@ -301,24 +399,62 @@ class FusionEngine:
         now = self.now if now is None else now
         finished = sorted((m for m in self.marbles if m.finish_time is not None), key=lambda m: m.finish_time)
         racing = [i for i in self._order if self.marbles[i].finish_time is None]
+        # First sighting: insert at the true position (no hysteresis), once.
+        for i in list(racing):
+            m = self.marbles[i]
+            if m.initialized and not m.placed:
+                racing.remove(i)
+                pos = next((k for k, j in enumerate(racing)
+                            if not self.marbles[j].initialized or self.marbles[j].x[0] < m.x[0]), len(racing))
+                racing.insert(pos, i)
+                m.placed = True
 
         def key(i: int) -> float:
             m = self.marbles[i]
             return m.x[0] if m.initialized else -np.inf
 
-        def observed(i: int) -> bool:
-            return self.status(self.marbles[i], now) == "tracking"
+        observed = {i: self.status(self.marbles[i], now) == "tracking" for i in racing}
 
-        # Adjacent swaps only when the trailing marble leads by > rank_margin
-        # (no flicker when two marbles run side by side) and is currently seen:
-        # a coasting marble's position is a prediction, which is not evidence of
-        # an overtake. Each swap removes one strict inversion, so this terminates.
+        def var(i: int) -> float:
+            # Relative-position variance: pixel noise of the latest observation
+            # (inflated when the marble is partly hidden). The 1 cm inter-camera
+            # floor is deliberately excluded: it is not a marble-vs-marble error.
+            return self.marbles[i].last_obs_r_px if observed[i] else 0.0
+
+        # An overtake is shown only when it is (a) bigger than rank_margin, so two
+        # marbles running side by side never flicker, (b) statistically confident:
+        # the lead exceeds rank_k standard deviations of the two observations,
+        # (c) sustained for rank_confirm seconds (noise spikes are uncorrelated
+        # frame to frame; a real overtake persists), and (d) made by a marble that
+        # is currently seen: a hidden marble's position is a prediction, which is
+        # not evidence. Each swap removes one strict inversion of the key order,
+        # so the loop terminates.
+        def need(a: int, b: int) -> float:
+            return self.rank_margin + self.rank_k * np.sqrt(var(a) + var(b))
+
+        def leads(b: int, a: int) -> bool:
+            return key(b) > key(a) + need(a, b) and (observed[b] or not self.marbles[a].initialized)
+
+        # Lead timers run for every pair, adjacent or not, so a marble passing
+        # three rivals at once is confirmed past all three in the same instant.
+        leading = {(b, a) for b in racing for a in racing if a != b and leads(b, a)}
+        self._lead_since = {p: self._lead_since.get(p, now) for p in leading}
+
+        def confirmed(b: int, a: int) -> bool:
+            if (b, a) not in leading:
+                return False
+            # Persistence is only needed close to the threshold, where noise could
+            # fake a lead; a lead one more margin beyond it is shown at once.
+            clear = key(b) > key(a) + need(a, b) + self.rank_margin
+            return (clear or now - self._lead_since[(b, a)] >= self.rank_confirm
+                    or not self.marbles[a].placed)
+
         swapped = True
         while swapped:
             swapped = False
             for k in range(len(racing) - 1):
                 a, b = racing[k], racing[k + 1]
-                if key(b) > key(a) + self.rank_margin and (observed(b) or not self.marbles[a].initialized):
+                if confirmed(b, a):
                     racing[k], racing[k + 1] = b, a
                     swapped = True
         self._order = [m.index for m in finished] + racing
@@ -327,8 +463,8 @@ class FusionEngine:
         close = set()
         for a, b in zip(finished, finished[1:]):
             # Too close to call: within the fixed timing resolution, or within
-            # 2 sigma of the two finish estimates (e.g. one marble partly hidden).
-            limit = max(self.photo_finish_s, 2 * np.hypot(a.finish_sigma, b.finish_sigma))
+            # k sigma of the two finish estimates (e.g. one marble partly hidden).
+            limit = max(self.photo_finish_s, self.photo_finish_k * np.hypot(a.finish_sigma, b.finish_sigma))
             if b.finish_time - a.finish_time < limit:
                 close |= {a.index, b.index}
         out = []

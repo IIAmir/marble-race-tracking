@@ -135,7 +135,7 @@ def run_live(mode="multi", scenario="nominal", seed=0, fps=30.0, nodes=3, finish
 
     engine = FusionEngine(ids, s_finish, track.s_range[1], cameras={c.cam_id: c.s_range for c in cams},
                           static_blind_zones=list(cfg.tunnels), rank_margin=cfg.marble_radius,
-                          photo_finish_s=0.002 if finish_cam else 0.006)
+                          photo_finish_s=0.0005 if finish_cam else 0.006)
     buf = ReorderBuffer(latency=0.05)
     server = LeaderboardServer(serve_port) if serve_port else None
     t0_wall.value = t0 = time.time() + 0.2
