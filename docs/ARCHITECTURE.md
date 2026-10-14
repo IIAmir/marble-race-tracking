@@ -102,7 +102,11 @@ Implemented in [`marbletrack/detector.py`](../marbletrack/detector.py) and
    model (specular highlights, shadows, noise) are discarded.
 4. **Grouping.** Pixels are grouped by *(connected component, colour class)*.
    Because each marble's colour is unique, two touching marbles of different
-   colours separate without any shape analysis.
+   colours separate without any shape analysis. Within a group only the largest
+   spatially contiguous piece is kept: when several marbles merge into one blob
+   (common at 45° when they line up along the line of sight), the small white
+   specular highlights of all of them share the white marble's colour, but they
+   are scattered specks, while a real marble is one patch.
 5. **Projection to the track (oblique).** The group centroid is decomposed onto
    the camera's calibrated image-space centerline as
    *waypoint + t·segment + u·cross-track*, where the cross-track image direction
@@ -197,7 +201,14 @@ is shown ahead of A only when **all** of these hold:
    latest observations' pixel uncertainty — no flicker when running side by
    side, and partly hidden marbles (larger σ) need a clearer lead;
 2. B is currently observed — a hidden marble's predicted position is not
-   evidence, so **no marble gains a place while unseen**;
+   evidence, so **no marble gains a place while unseen**. Symmetrically, passing
+   a *hidden* marble requires a lead beyond that marble's full prediction
+   variance, which grows while it is unseen, so nobody passes a marble whose
+   whereabouts are uncertain (its held-back estimate is not a position). To keep
+   hidden marbles from blocking evidence-backed passes, B may pass a hidden
+   marble together with the nearest visible marble the board already holds ahead
+   of it, once B is confirmed ahead of that one. Lost marbles (unseen > 1.5 s)
+   no longer block the board;
 3. near the threshold (lead below one more half-diameter) the lead has held for
    **100 ms**; frame-to-frame noise is uncorrelated, a real overtake persists.
    Clear overtakes are shown at once.
