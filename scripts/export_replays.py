@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from marbletrack.edgecases import EDGE_CASES  # noqa: E402
 from marbletrack.race import SCENARIOS, run_race  # noqa: E402
 
-DEFAULT = [("single", "nominal"), ("multi", "camera_failure"), ("multi", "corner_duel"), ("multi", "photo_finish"),
-           ("multi", "backward_slip"), ("multi", "worst_case")]
+DEFAULT = [("multi", "nominal"), ("single", "nominal"), ("multi", "camera_failure"), ("multi", "corner_duel"),
+           ("multi", "photo_finish"), ("multi", "backward_slip"), ("multi", "worst_case")]
 
 
 def main():
@@ -28,7 +28,8 @@ def main():
         r = run_race(mode, seed=a.seed, scenario=scenario, record=True)
         rp = r.replay
         rp.update(mode=mode, scenario=sc, description=scenario.description,
-                  summary={k: getattr(r, k) for k in ("rank_accuracy", "rank_accuracy_all", "final_order_correct",
+                  summary={k: getattr(r, k) for k in ("rank_accuracy", "rank_accuracy_all", "rank_accuracy_latency",
+                                                      "phantom_overtakes", "final_order_correct",
                                                       "final_order_strict", "photo_finishes", "finish_err_ms_max",
                                                       "pos_err_cm_rms", "id_errors")},
                   events=r.events)

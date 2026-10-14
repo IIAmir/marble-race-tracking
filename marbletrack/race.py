@@ -209,6 +209,11 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
                         shown += 1
                         if not any(ahead(x, y, tr) for _, tr in truth_hist):
                             phantom += 1
+                            if _DEBUG:
+                                ex = next(e for e in board if e.marble_id == ids[x])
+                                ey = next(e for e in board if e.marble_id == ids[y])
+                                print(f"[phantom] t={t:.3f} {ids[x]}({status_now[x]}, est {ex.progress_m:.3f}, true {truth[x]:.3f}) "
+                                      f"passed {ids[y]}({status_now[y]}, est {ey.progress_m:.3f}, true {truth[y]:.3f})")
         prev_order = order
         ok = ok_all = True
         ok_lat = True

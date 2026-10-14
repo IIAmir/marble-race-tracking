@@ -106,7 +106,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 <div class="app">
   <header>
     <h1>Marble Race <span>Control</span> · 3D</h1>
-    <div class="sub">Replays recorded from the real tracking pipeline: rendered camera frames → colour detection → track-progress fusion → leaderboard. Spheres are the true marbles; boxes are what the tracker computed. Click a marble or a row in the timing tower.</div>
+    <div class="sub">Replays recorded from the real tracking pipeline: rendered camera frames (14 cameras at about 45°, or one master camera overhead) → colour detection → track-progress fusion → leaderboard. Spheres are the true marbles; boxes are what the tracker computed. Click a marble or a row in the timing tower.</div>
   </header>
 
   <div class="view" id="view">
@@ -168,7 +168,8 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 const REPLAYS = JSON.parse(document.getElementById("replays").textContent);
 const NAMES = {
   single_nominal: "1 master camera · nominal race",
-  multi_camera_failure: "14 cameras · two cameras fail",
+  multi_nominal: "14 angled cameras · nominal race",
+  multi_camera_failure: "14 angled cameras · two fail",
   multi_corner_duel: "Corner duel · micro-overtake",
   multi_photo_finish: "Photo-finish ladder",
   multi_backward_slip: "Backward slips & bounces",
@@ -318,8 +319,8 @@ function build(key) {
   const cams = R.cam_ids.map((id, k) => {
     const fp = R.cam_footprints[k];
     const cxm = fp.reduce((a, p) => a + p[0], 0) / 4, cym = fp.reduce((a, p) => a + p[1], 0) / 4;
-    const h = id === "master" ? 2.6 : id === "finish" ? 0.45 : 0.9;
-    const apex = W(cxm, cym, h), pts = [];
+    const pos = R.cam_positions && R.cam_positions[k];  // real camera pose (angled rigs)
+    const apex = pos ? W(pos[0], pos[1], pos[2]) : W(cxm, cym, id === "master" ? 2.6 : id === "finish" ? 0.45 : 0.9), pts = [];
     fp.forEach((p, i) => { const q = fp[(i + 1) % 4]; pts.push(apex, W(p[0], p[1], 0.002), W(p[0], p[1], 0.002), W(q[0], q[1], 0.002)); });
     const mat = new THREE.LineBasicMaterial({ color: 0x6fcf8e, transparent: true, opacity: id === "master" ? 0.35 : 0.45 });
     const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat); camGroup.add(lines);
@@ -356,12 +357,12 @@ function build(key) {
   $("scenDesc").textContent = R.description;
   const S = R.summary;
   $("kpis").innerHTML = [
-    ["Visible rank", (100 * S.rank_accuracy).toFixed(1) + "%"],
+    ["Rank (100 ms budget)", (100 * (S.rank_accuracy_latency ?? S.rank_accuracy)).toFixed(1) + "%"],
+    ["Phantom overtakes", S.phantom_overtakes ?? "—"],
     ["Final order", S.final_order_correct ? "correct" : "wrong"],
     ["ID errors", S.id_errors],
     ["Max finish err", S.finish_err_ms_max.toFixed(2) + " ms"],
     ["Position RMS", S.pos_err_cm_rms.toFixed(2) + " cm"],
-    ["Photo flags", S.photo_finishes],
   ].map(([k, v]) => `<div><span>${k}</span><strong>${v}</strong></div>`).join("");
   applyToggles();
   setView($("camview").value, true);
@@ -469,7 +470,7 @@ function renderSteps(S, k) {
   const heading = ((90 - P.heading * 180 / Math.PI) % 360 + 360) % 360;
   const items = [
     ["Colour identity", `Pixels matched ${R.ids[j]}'s colour model in <span class="mono">${cam}</span>: d² = <span class="mono">${fmt(own, 1)}</span>; best other marble d² = <span class="mono">${fmt(rival, 1)}</span>. Assigned only if within 20 of the best match (ratio test) and inside the motion gate.`],
-    ["Nearest waypoints", `Blob centre (${fmt(px, 3)}, ${fmt(py, 3)}) m projects onto segment <span class="mono">W${P.i} → W${P.i + 1}</span> at t = <span class="mono">${fmt(P.t, 2)}</span>.<br><span class="formula">s = s(W${P.i}) + t · Δs = ${fmt(cl.s[P.i], 3)} + ${fmt(P.t, 2)} × ${fmt(cl.s[P.i + 1] - cl.s[P.i], 3)} = ${fmt(P.s, 3)} m</span>`],
+    ["Nearest waypoints", `Blob centre (${fmt(px, 3)}, ${fmt(py, 3)}) m decomposes onto segment <span class="mono">W${P.i} → W${P.i + 1}</span> at t = <span class="mono">${fmt(P.t, 2)}</span>, plus a cross-track offset. In an angled camera the decomposition uses that camera's calibrated cross-track direction at each waypoint, so perspective skew does not shift progress.<br><span class="formula">s = s(W${P.i}) + t · Δs = ${fmt(cl.s[P.i], 3)} + ${fmt(P.t, 2)} × ${fmt(cl.s[P.i + 1] - cl.s[P.i], 3)} = ${fmt(P.s, 3)} m</span>`],
     ["Curve direction", c
       ? `In <b style="display:inline;color:var(--amber)">T${corner + 1}</b>, a ${c.dir}-hander of radius ${c.R.toFixed(2)} m. Heading ${heading.toFixed(0)}°. Lateral offset ${(P.lat * 1000).toFixed(0)} mm, ${inside ? "inside" : "outside"} line. Progress is measured at the foot of the perpendicular, so inside and outside lines are compared at the same point of the corner.`
       : `Straight. Heading ${heading.toFixed(0)}°. Lateral offset ${(P.lat * 1000).toFixed(0)} mm ${P.lat >= 0 ? "left" : "right"} of the centerline. It does not change progress.`],

@@ -66,7 +66,8 @@ flowchart LR
 | | Mode A: master camera | Mode B: 14 segment cameras |
 |---|---|---|
 | Cameras | 1 × 2.3 MP colour global shutter (e.g. IMX392, ~51 fps) | 14 × 1.6 MP colour global shutter (IMX273, ~75 fps) |
-| Ground resolution | ~1.7 mm/px over 3.3 × 2.2 m → 16 mm marble ≈ 9 px, 25 mm ≈ 14 px | ~0.7–1.0 mm/px → 16 mm marble ≈ 16–23 px |
+| Mounting | Overhead, looking straight down | ~0.5–1 m from the track, **about 45° above horizontal**, from any side |
+| Ground resolution | ~1.7 mm/px over 3.3 × 2.2 m → 16 mm marble ≈ 9 px, 25 mm ≈ 14 px | Varies across each view with perspective; in simulation at 640×480 a 25 mm marble spans 7–29 px (a 1.6 MP camera gives ≈2.2× more) |
 | Best for | Flat tabletop tracks that fit one view, tight budget | Large, multi-level or 3-D tracks; overhangs; broadcast close-ups |
 | Weak spots | Resolution limits marble size; anything that overhangs the track hides it; 1 camera = single point of failure | More calibration; 14 × bandwidth; inter-camera consistency |
 | Optional | + finish camera (strongly recommended) | + finish camera (strongly recommended) |
@@ -102,15 +103,37 @@ Implemented in [`marbletrack/detector.py`](../marbletrack/detector.py) and
 4. **Grouping.** Pixels are grouped by *(connected component, colour class)*.
    Because each marble's colour is unique, two touching marbles of different
    colours separate without any shape analysis.
-5. **Projection to the track.** The group centroid is projected onto the
-   camera's calibrated image-space centerline, whose vertices carry the global
-   `s` value; this is correct under perspective. Where the track passes near
-   itself in the image (spirals, bridges), every nearby pass is returned as a
-   candidate and fusion picks the one consistent with the marble's motion.
+5. **Projection to the track (oblique).** The group centroid is decomposed onto
+   the camera's calibrated image-space centerline as
+   *waypoint + t·segment + u·cross-track*, where the cross-track image direction
+   at each waypoint comes from calibration. Under an angled view the image of
+   the track's cross-axis is skewed, so a plain nearest-pixel projection slides
+   along the track for marbles in the inside or outside lane (up to 9 mm at 45°
+   in simulation); the oblique decomposition removes this (median 0.5 mm,
+   max 3 mm over 420 placements in 14 angled views) and returns the lateral
+   offset `u` in metres. The centerline is calibrated at **marble-centre
+   height**, so the 12.5 mm height of a marble's centre above the track causes
+   no parallax. Where the track passes near itself in the image (spirals,
+   bridges), every nearby pass is returned as a candidate and fusion picks the
+   one consistent with the marble's motion.
+   **Completeness test:** foreground is searched in a slightly widened region
+   around the camera's section and a blob is accepted only if ≥ 85 % of its
+   pixels lie inside the section. A marble straddling the section end (in an
+   angled view its top projects into the neighbouring section) is reported by
+   the camera that sees it whole, never as a clipped fragment.
 6. **Uncertainty.** Centroid σ is 1 px, inflated by up to r/2 when the blob is
-   smaller than a full marble (partly hidden) — this feeds directly into
-   finish-time uncertainty and the photo-finish flag.
-7. **Adaptation.** The background is updated slowly from non-marble pixels, and
+   smaller than a full marble at that place in the image (partly hidden by a
+   wall or another marble). The expected full-marble area is tabulated along
+   each camera's section at calibration, because perspective makes near marbles
+   larger than far ones. The inflation is tracked separately as *correlated*
+   bias, so it is not averaged away when many frames are fitted.
+7. **Illumination compensation.** Each frame, the per-channel brightness ratio
+   to the background is measured as the median over 1,500 fixed track pixels.
+   The background is scaled by it before subtraction and pixel colours are
+   divided by it before colour matching. Without it, a 20 % dimming turned the
+   light-grey track walls of angled views into foreground clutter (hundreds of
+   phantom detections per second in simulation).
+8. **Adaptation.** The background is updated slowly from non-marble pixels, and
    each colour model's mean follows unambiguous detections (best match < 9 and
    runner-up > 50), absorbing slow lighting drift without ever pulling a model
    toward a neighbouring colour.
@@ -163,6 +186,10 @@ the run-out, then leave association once out of view.
 | Camera stops delivering frames (> 300 ms) | Its section becomes a blind zone; event logged; reverts automatically when frames resume |
 | Re-appearance | Re-acquired by colour; motion gate has widened with the covariance |
 
+**Cold start.** A marble seen for the first time starts at the field's median
+speed (wide uncertainty) and is shown as `acquiring` until it has three
+observations; like a hidden marble it cannot overtake on prediction alone.
+
 **Leaderboard.** Finished marbles first, by finish time; then by `s`. A marble
 seen for the first time is inserted at its true position. After that, marble B
 is shown ahead of A only when **all** of these hold:
@@ -185,7 +212,11 @@ between the two bracketing observations. 30 ms later it is replaced by a
 within ±30 ms (≈14 points from a 240 fps finish camera), solved for
 `s(t) = s_finish` by Newton's method. The 1σ finish uncertainty is propagated
 from the fit covariance (inflated by the reduced χ² when residuals exceed the
-stated noise). Two finishers are flagged **photo finish** when their gap is
+stated noise), **plus the full correlated occlusion bias**: a neighbour hiding
+part of a marble shifts every frame the same way, so that share does not
+average down. Until the fit runs, the provisional two-frame time claims no
+better than half the frame interval, so close finishers are flagged from the
+first moment. Two finishers are flagged **photo finish** when their gap is
 below `max(0.5 ms, 3·√(σ₁²+σ₂²))` (6 ms floor without a finish camera); the
 3σ rule bounds an unflagged wrong order to errors beyond 3σ. Flagged pairs go
 to operator review of the finish-camera frames instead of being decided by the
@@ -200,10 +231,13 @@ the filter state.
 
 1. **Lens/geometry.** Mount, focus and lock each camera. No metric camera
    calibration is needed for ranking: only pixel → `s` matters.
-2. **Centerline.** In the calibration tool, click points along the track centre
-   in each camera image and give their `s` values (from the track plan, or by
-   rolling a reference marble at known spacing). Dense points (every few cm)
-   make perspective irrelevant. Mark tunnels/occluders as static blind zones.
+2. **Centerline.** Roll a reference marble along the track (or click its centre
+   at points along the track) in each camera image, so the centerline is
+   recorded at **marble-centre height**, and give the points their `s` values
+   from the track plan. Dense points (every few cm) make perspective along the
+   track irrelevant. The tool also takes the two track edges at each point, which
+   give the image direction of the track's cross-axis used by the oblique
+   projection. Mark tunnels/occluders as static blind zones.
 3. **Track mask.** Generated from the centerline and track width; touch up by
    painting.
 4. **Background.** Capture 2–5 s of empty track per camera (median).
@@ -296,6 +330,21 @@ recording of raw frames around the finish for audit, metrics/alerting.
 | `corner_duel` | Inside line passes outside line by 3 cm in a 180° turn; second pair dithers ±8 mm | Exactly one displayed overtake; zero flicker on the dead heat |
 | `backward_slip` | Reversals at up to 1 m/s on a straight, in a corner and just past the finish | No lost marbles, ranks correct, first crossing timed |
 | `fast_handoff` | 3–3.5 m/s, 14 cameras, 3 cm overlap, 30 fps, ±1 cm calibration bias | No ID errors, ranks correct through every hand-off |
+
+All 14-camera cases run on **45° angled perspective cameras** (eight viewing
+directions relative to the track: from behind, ahead, either side and the
+diagonals), simulated with a pinhole model and depth buffer: perspective
+scale, skewed silhouettes, height parallax, wall occlusion and marble-on-marble
+occlusion along the line of sight are all present. The finish camera is also
+angled, beside the line.
+
+**Metrics.** *Rank accuracy* is the share of instants (30 per second) at which
+every adjacent pair of visible marbles on the board is in true order (pairs
+within two marble diameters count as level). The *100 ms display budget*
+variant accepts a pair if it matched the track at any moment in the last
+100 ms, the normal allowance for broadcast graphics. A *phantom overtake* is a
+displayed pass that never happened on the track within that budget; it is the
+precision metric and must be zero.
 
 **Invariants**, fuzzed with Hypothesis over random input streams (clutter
 blobs, ambiguous colours, duplicates, out-of-order and repeated timestamps,

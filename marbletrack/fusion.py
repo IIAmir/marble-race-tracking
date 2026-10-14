@@ -432,13 +432,22 @@ class FusionEngine:
             m = self.marbles[i]
             return m.x[0] if m.initialized else -np.inf
 
-        observed = {i: self.status(self.marbles[i], now) == "tracking" for i in racing}
+        status = {i: self.status(self.marbles[i], now) for i in racing}
+        observed = {i: status[i] == "tracking" for i in racing}
 
         def var(i: int) -> float:
-            # Relative-position variance: pixel noise of the latest observation
-            # (inflated when the marble is partly hidden). The 1 cm inter-camera
-            # floor is deliberately excluded: it is not a marble-vs-marble error.
-            return self.marbles[i].last_obs_r_px if observed[i] else 0.0
+            # Observed marble: pixel noise of the latest observation (inflated when
+            # partly hidden); the 1 cm inter-camera floor is excluded, it is not a
+            # marble-vs-marble error. Hidden or just-acquired marble: its full
+            # prediction variance, which grows while it is unseen, so nobody passes
+            # a marble whose whereabouts are uncertain. Lost marbles (unseen for
+            # lost_after) no longer block the board.
+            m = self.marbles[i]
+            if observed[i]:
+                return m.last_obs_r_px
+            if status[i] in ("coasting", "acquiring"):
+                return float(m.P[0, 0])
+            return 0.0
 
         # An overtake is shown only when it is (a) bigger than rank_margin, so two
         # marbles running side by side never flicker, (b) statistically confident:
@@ -468,13 +477,24 @@ class FusionEngine:
             return (clear or now - self._lead_since[(b, a)] >= self.rank_confirm
                     or not self.marbles[a].placed)
 
+        def may_pass(k: int) -> bool:
+            a, b = racing[k], racing[k + 1]
+            if confirmed(b, a):
+                return True
+            if observed[b] and status[a] in ("coasting", "acquiring"):
+                # A hidden marble never blocks a pass between visible marbles: b may
+                # pass it together with the nearest visible marble the board already
+                # holds ahead of it, once b is confirmed ahead of that marble.
+                c = next((racing[j] for j in range(k - 1, -1, -1) if observed[racing[j]]), None)
+                return c is not None and confirmed(b, c)
+            return False
+
         swapped = True
         while swapped:
             swapped = False
             for k in range(len(racing) - 1):
-                a, b = racing[k], racing[k + 1]
-                if confirmed(b, a):
-                    racing[k], racing[k + 1] = b, a
+                if may_pass(k):
+                    racing[k], racing[k + 1] = racing[k + 1], racing[k]
                     swapped = True
         self._order = [m.index for m in finished] + racing
 
