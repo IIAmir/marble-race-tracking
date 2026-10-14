@@ -34,6 +34,8 @@ button:hover, select:hover { border-color: var(--muted); }
 button.primary { background: var(--amber); color: #111; border-color: var(--amber); font-weight: 600; }
 button.on { border-color: var(--amber); color: var(--amber); }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.seed { font: 12px var(--mono); color: var(--muted); }
+.banner .hist { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .sep { width: 1px; height: 22px; background: var(--line); }
 .view { grid-area: view; position: relative; min-height: 340px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #0a0e13; }
 .view canvas.gl { display: block; position: absolute; inset: 0; }
@@ -101,10 +103,12 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
     <label class="f">Marbles <select id="count"><option>6</option><option>8</option><option selected>10</option><option>12</option><option>16</option></select></label>
     <label class="f">Laps <select id="laps"><option>1</option><option>2</option><option selected>3</option><option>5</option></select></label>
     <label class="f">Chaos <select id="chaos"><option value="0.1">Calm</option><option value="0.35" selected>Normal</option><option value="0.55">Wild</option></select></label>
+    <label class="f"><input type="checkbox" id="obstacles" checked> Obstacles</label>
     <label class="f">Cameras <select id="rig"><option value="angled">14 angled cams</option><option value="overhead">1 overhead cam</option><option value="hybrid">Both</option></select></label>
     <span class="sep"></span>
     <button id="newRace" class="primary" type="button" title="New race (N)">New race</button>
     <button id="restart" type="button" title="Restart same race (R)">Restart</button>
+    <span class="seed" id="seedLbl" title="Every new race draws a fresh seed: marble order, grip, wobble and the whole obstacle course. Restart replays this seed."></span>
     <button id="play" type="button" title="Pause / resume (Space)">Pause</button>
     <label class="f">Speed <select id="speed"><option value="0.1">0.1× slow-mo</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
   </div>
@@ -141,7 +145,7 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
       <label><input type="checkbox" id="tFeeds" checked> Camera feeds</label>
       <label><input type="checkbox" id="tMinimap" checked> Minimap</label>
       <label><input type="checkbox" id="tWaypoints"> Centerline</label>
-      <label>Marble size <select id="mscale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></label>
+      <label>Marble size <select id="mscale"><option value="1" selected>1× (true scale)</option><option value="2">2×</option><option value="3">3×</option></select></label>
     </div>
     <span class="sep"></span>
     <label class="f">Faults</label>
@@ -185,10 +189,11 @@ const TRACK_W = 0.055, WALL_H = 0.016, G = 9.81;
 
 // ============================================================ random
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-// Physics has its own seeded stream (so "Restart" replays the same race); sensor noise does not.
-let rnd = mulberry32(1);
+// Physics and sensors have their own seeded streams, so "Restart" replays the same race exactly
+// (until the operator injects a fault).
+let rnd = mulberry32(1), srnd = mulberry32(2);
 const gaussOf = (r) => () => { let u = 0, v = 0; while (!u) u = r(); while (!v) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-const gauss = gaussOf(Math.random);
+const gauss = gaussOf(() => srnd());
 let pgauss = gaussOf(rnd);
 
 // ============================================================ marbles & colour
@@ -363,81 +368,333 @@ class Track {
   }
   coveredAbove(s) { const [i] = this.idx(s); return this.covered[i] === 1; }
   partnersOf(s) { const [i] = this.idx(s); return this.partners.get(i - (i % 2)) || []; }
+  // ---- course features (set by Physics; absent while the course itself is being laid out)
+  rel(s, s0) { const x = s - s0; return this.closed ? ((x % this.L) + 1.5 * this.L) % this.L - this.L / 2 : x; }
+  widthAt(s) {
+    const C = this.course; let w = TRACK_W; if (!C) return w;
+    for (const z of C.widths) {
+      const x = this.rel(s, z.s0), len = z.s1 - z.s0; if (x <= 0 || x >= len) continue;
+      const u = Math.min(1, Math.min(x, len - x) / z.taper); w += (z.w - TRACK_W) * u * u * (3 - 2 * u);
+    }
+    return w;
+  }
+  bumpAt(s) {  // speed bumps: raised cosines; jump ramps: a curved kicker ending in a lip
+    const C = this.course; let h = 0; if (!C) return 0;
+    for (const b of C.bumps) { const x = this.rel(s, b.s0); if (x <= 0 || x >= b.len) continue; const u = x / b.len; h += b.kicker ? b.H * u * u : b.H * 0.5 * (1 - Math.cos(6.2832 * u)); }
+    return h;
+  }
+  bumpSlope(s) {
+    const C = this.course; let g = 0; if (!C) return 0;
+    for (const b of C.bumps) { const x = this.rel(s, b.s0); if (x <= 0 || x >= b.len) continue; const u = x / b.len; g += b.kicker ? 2 * b.H * u / b.len : b.H * Math.PI / b.len * Math.sin(6.2832 * u); }
+    return g;
+  }
+  roughAt(s) {  // rolling-resistance factor
+    const C = this.course; let k = 1; if (!C) return 1;
+    for (const z of C.rough) { const x = this.rel(s, z.s0); if (x >= 0 && x <= z.s1 - z.s0) k *= z.k; }
+    return k;
+  }
+  dragAt(s) {  // gravel: every pebble costs a little energy, so the loss grows with speed (a = -k·v²)
+    const C = this.course; let k = 0; if (!C) return 0;
+    for (const z of C.rough) { const x = this.rel(s, z.s0); if (x >= 0 && x <= z.s1 - z.s0) k += z.drag; }
+    return k;
+  }
+  surfaceAt(s) { const C = this.course; if (!C) return null; for (const z of C.rough) { const x = this.rel(s, z.s0); if (x >= 0 && x <= z.s1 - z.s0) return z.sand ? "sand" : "gravel"; } return null; }
+  tyAt(s) { const [i, f] = this.idx(s); return this.ty[i] + (this.ty[Math.min(this.N, i + 1)] - this.ty[i]) * f; }
+  slopeAt(s) { return this.tyAt(s) + this.bumpSlope(s); }
+  vcurv(s) { const h = 0.015; return (this.slopeAt(s + h) - this.slopeAt(s - h)) / (2 * h); }  // vertical curvature of the rolling line
+  chanC(w) { return PH.channel * Math.min(1.5, (TRACK_W / w) ** 2) / (w / 2) ** 2; }  // U-channel: y = c·d²
+  surfaceY(s, d = 0) { return this.sample(s).y + this.bumpAt(s) + this.chanC(this.widthAt(s)) * d * d; }
+  marbleWorld(b, sc = 1, out = new V3()) {  // centre of the marble in world space
+    if (b.dropped) return out.copy(b.wp3);
+    const q = this.sample(b.s);
+    return out.set(q.x + b.d * q.nx, b.z + b.r * sc, q.z + b.d * q.nz);
+  }
+}
+
+// ============================================================ course: obstacles and track features
+// Every race draws its own course: which obstacles, where, spinner speeds and directions, gate
+// timing, bump heights. Obstacle sections are widened (as on real runs) so marbles can get past.
+const OB = { post: 0.003, bumper: 0.008, splitter: 0.003, arm: 0.0018 };
+function straightAt(T, s0, len, used, maxCurv) {  // nearest free stretch near s0 without tight curves
+  for (let k = 0; k < 500; k++) {
+    for (const sg of [1, -1]) {
+      const s = s0 + sg * k * 0.02;
+      if (s < 0.6 || s + len > (T.closed ? T.L * 2 : T.L - 0.8)) continue;
+      if (used.some(([a, b]) => Math.abs(T.rel(s + len / 2, (a + b) / 2)) < (len + b - a) / 2 + 0.15)) continue;
+      let ok = true;
+      for (let u = s; u <= s + len; u += 0.02) if (Math.abs(T.sample(u).cn) > maxCurv || T.inLift(u) || T.inTunnel(u) || T.sDist(u, T.startS) < 0.5 || T.sDist(u, T.finishS) < 0.5) { ok = false; break; }
+      if (ok) { used.push([s, s + len]); return s; }
+    }
+  }
+  return null;
+}
+function buildCourse(T, mapKey, rng, enabled) {
+  const C = { solids: [], bumps: [], widths: [], rough: [], gates: [], log: [] };
+  // mechanical start gate (all maps) and, on open tracks, a sand trap plus the collection box end wall
+  C.startGate = { kind: "gate", s0: T.startS + 0.015, rho: 0.003, H: 0.03, e: 0.2, closed: true, start: true };
+  C.solids.push(C.startGate);
+  if (!T.closed) {
+    C.rough.push({ s0: T.finishS + 0.12, s1: T.L, k: 14, drag: 2, sand: true });
+    C.solids.push({ kind: "wall", s0: T.L - 0.012, rho: 0.004, H: 0.04, e: 0.25 });
+  }
+  if (!enabled) return C;
+  const L = T.L, u = () => rng(), pick = (a, b) => a + (b - a) * u(), used = [];
+  const plan = {
+    serpentine: ["pins", "spinner", "bumps", "funnel", "bumper", "rough", "kicker", "chicane"],
+    alpine: ["kicker", "spinner", "gate", "bumper", "splitter", "kicker", "spinner", "funnel", "pins", "rough"],
+    spiral: ["pins", "bumper", "funnel", "bumps", "spinner"],
+    figure8: ["spinner", "kicker", "pins", "splitter", "rough"],
+    grandprix: ["chicane", "kicker", "bumper", "rough", "spinner", "funnel", "pins"],
+  }[mapKey];
+  // shuffle the order a little, so each race meets the obstacles in a different sequence
+  for (let k = plan.length - 1; k > 0; k--) if (u() < 0.5) { const j = Math.floor(u() * (k + 1)); [plan[k], plan[j]] = [plan[j], plan[k]]; }
+  const n = plan.length, TAPER = 0.08, maxCurv = mapKey === "spiral" ? 1.6 : 0.7;
+  const widen = (s, len, w) => C.widths.push({ s0: s, s1: s + len, w, taper: TAPER });
+  plan.forEach((type, k) => {
+    const core = { pins: 0.36, chicane: 0.42, spinner: 0.1, bumps: 0.6, funnel: 0.5, bumper: 0.1, rough: 0.5, kicker: 0.12, gate: 0.06, splitter: 0.18 }[type];
+    const wide = ["pins", "chicane", "spinner", "bumper", "splitter"].includes(type), len = core + (wide ? 2 * TAPER : 0);
+    const frac = (k + 0.6 + 0.6 * (u() - 0.5)) / (n + 0.4);
+    const s = straightAt(T, (T.closed ? T.startS : 0) + frac * L * (T.closed ? 1 : 0.92), len, used, maxCurv);
+    if (s == null) return;
+    const a = wide ? s + TAPER : s;  // where the obstacle itself starts
+    if (type === "pins") {
+      widen(s, len, 0.12);
+      const rows = 4 + Math.floor(u() * 2);
+      for (let r = 0; r < rows; r++) {
+        const cols = r % 2 ? [-0.02, 0.02] : [-0.04, 0, 0.04];
+        for (const d of cols) C.solids.push({ kind: "post", s0: a + 0.03 + r * core / rows, d0: d + (u() - 0.5) * 0.006, rho: OB.post, H: 0.028, e: 0.6 });
+      }
+      C.log.push(`pin field at ${s.toFixed(1)} m`);
+    } else if (type === "chicane") {
+      widen(s, len, 0.1);
+      const sg0 = u() < 0.5 ? 1 : -1;
+      for (let j = 0; j < 4; j++) C.solids.push({ kind: "post", s0: a + 0.03 + j * 0.12, d0: (j % 2 ? -sg0 : sg0) * 0.026, rho: 0.011, H: 0.03, e: 0.5, bollard: true });
+      C.log.push(`bollard chicane at ${s.toFixed(1)} m`);
+    } else if (type === "spinner") {
+      widen(s, len, 0.12);
+      const arms = 3 + Math.floor(u() * 2), omega = pick(2.5, 6.5) * (u() < 0.5 ? -1 : 1);
+      C.solids.push({ kind: "spinner", s0: a + core / 2, d0: 0, arms, len: 0.022, rho: OB.arm, H: 0.022, e: 0.45, omega, phase: u() * 6.283, hub: 0.006 });
+      C.log.push(`${arms}-arm spinner at ${s.toFixed(1)} m (${Math.abs(omega).toFixed(1)} rad/s ${omega > 0 ? "anticlockwise" : "clockwise"})`);
+    } else if (type === "bumper") {
+      widen(s, len, 0.11);
+      C.solids.push({ kind: "bumper", s0: a + core / 2, d0: (u() < 0.5 ? -1 : 1) * pick(0.006, 0.02), rho: OB.bumper, H: 0.03, e: 0.8, kick: 0.5, flash: 0 });
+      C.log.push(`pinball bumper at ${s.toFixed(1)} m`);
+    } else if (type === "splitter") {
+      widen(s, len, 0.1);
+      C.solids.push({ kind: "splitter", s0: a, s1: a + core, d0: 0, rho: OB.splitter, H: 0.026, e: 0.5 });
+      C.log.push(`lane splitter at ${s.toFixed(1)} m`);
+    } else if (type === "gate") {
+      const g = { kind: "gate", s0: s + 0.03, rho: 0.003, H: 0.03, e: 0.2, closed: false, period: pick(1.6, 3.2), open: pick(0.4, 0.65), phase: u() };
+      C.solids.push(g); C.gates.push(g);
+      C.log.push(`piston gate at ${s.toFixed(1)} m (${g.period.toFixed(1)} s cycle)`);
+    } else if (type === "bumps") {
+      const nb = 3 + Math.floor(u() * 3);
+      for (let j = 0; j < nb; j++) C.bumps.push({ s0: s + j * core / nb, len: 0.07, H: pick(0.004, 0.009), kicker: false });
+      C.log.push(`${nb} speed bumps at ${s.toFixed(1)} m`);
+    } else if (type === "kicker") {
+      C.bumps.push({ s0: s, len: 0.1, H: pick(0.007, 0.013), kicker: true });
+      C.log.push(`jump ramp at ${s.toFixed(1)} m`);
+    } else if (type === "funnel") {
+      C.widths.push({ s0: s, s1: s + len, w: pick(0.029, 0.033), taper: 0.3 * len, funnel: true });
+      C.log.push(`single-file funnel at ${s.toFixed(1)} m`);
+    } else if (type === "rough") {
+      C.rough.push({ s0: s, s1: s + len, k: 1.5, drag: pick(0.5, 1) });
+      C.log.push(`gravel strip at ${s.toFixed(1)} m`);
+    }
+  });
+  C.log.sort((x, y) => parseFloat(x.split(" at ")[1]) - parseFloat(y.split(" at ")[1]));
+  return C;
 }
 
 // ============================================================ physics
+// Glass marbles (2.5 g/cm³) rolling on a U-channel track. Rolling: a = 5/7·g·slope (solid sphere),
+// rolling resistance, air drag, wall contact with friction, take-off when the surface falls away
+// faster than gravity can follow (crests, jump lips), ballistic flight and bouncy landings,
+// 3-D sphere collisions, and collisions with posts, bumpers, spinners, splitters and gates.
+const PH = { rr: 0.009, air: 0.012, eBall: 0.88, eWall: 0.45, muWall: 0.12, channel: 0.006, latDamp: 1.2 };
 class Physics {
-  constructor(track, count, laps, seed, chaos = 0.35) {
+  constructor(track, count, laps, seed, chaos = 0.35, obstacles = true, mapKey = "") {
     this.track = track; rnd = mulberry32(seed); pgauss = gaussOf(rnd);
+    this.course = buildCourse(track, mapKey, rnd, obstacles);
+    track.course = this.course;
     this.laps = track.closed ? laps : 1;
     this.raceDist = track.closed ? track.startS + this.laps * track.L : track.finishS;
     const order = [...Array(count).keys()].sort(() => rnd() - 0.5);
     this.m = order.map((ci, k) => {
-      const row = Math.floor(k / 2), lane = k % 2 ? -1 : 1;
-      const u = () => rnd() * 2 - 1;
-      const r = 0.0125 * (1 + 0.05 * u());
-      return { ci, name: PALETTE[ci][0], hex: PALETTE[ci][1], r, mass: r ** 3, rr: 0.012 * (1 + 0.5 * u()), cd: 0.11 * (1 + 0.5 * u()),
-        s: track.startS - 0.03 - row * 0.032, v: 0, d: lane * 0.012, vd: 0, finished: false, finishT: null, gone: false, stopAt: null, nextJoint: 0,
-        // grip and drag vary along the track differently for every marble, so the fastest marble
-        // changes from section to section (more overtaking with more chaos)
-        wl: 1.5 + 2.5 * rnd(), wp: rnd() * 6.283, wa: chaos };
+      const row = Math.floor(k / 2), lane = k % 2 ? -1 : 1, uu = () => rnd() * 2 - 1;
+      const r = 0.0125 * (1 + 0.04 * uu()), s = track.startS - 0.016 - row * 0.03 - rnd() * 0.004;
+      const b = { ci, name: PALETTE[ci][0], hex: PALETTE[ci][1], r, mass: r ** 3, rr: PH.rr * (1 + 0.45 * uu()), cd: PH.air * (1 + 0.3 * uu()),
+        s, v: 0, d: lane * 0.012 + uu() * 0.002, vd: 0, z: 0, vz: 0, air: false, finished: false, finishT: null, gone: false, dropped: false,
+        wl: 1.5 + 2.5 * rnd(), wp: rnd() * 6.283, wa: chaos, airMax: 0, events: {}, best: s, bestT: 0 };
+      b.z = track.surfaceY(b.s, b.d);
+      return b;
     });
-    this.t = 0; this.gateOpen = false; this.finishedCount = 0;
-    this.jointSpacing = 0.7;
+    this.t = 0; this.gateOpen = false; this.finishedCount = 0; this.events = [];
+  }
+  gateClosed(g) {
+    if (g.start) return !this.gateOpen;
+    return ((this.t / g.period + g.phase) % 1) > g.open;
   }
   step(dt) {
-    const T = this.track, M = this.m;
+    const T = this.track, M = this.m, C = this.course;
     this.t += dt;
+    for (const g of C.solids) if (g.kind === "gate") g.closed = this.gateClosed(g);
     for (const b of M) {
       if (b.gone) continue;
-      if (!this.gateOpen) { b.v = 0; b.vd = 0; continue; }
-      if (b.stopAt != null && b.s >= b.stopAt) { b.s = b.stopAt; b.v = 0; b.vd *= 0.5; continue; }
-      const q = T.sample(b.s);
-      let a;
-      if (T.inLift(b.s)) { a = 6 * (0.55 - b.v); b.vd += -40 * b.d * dt - 6 * b.vd * dt; }
-      else {
-        const wob = 1 + b.wa * Math.sin(6.283 * b.s / b.wl + b.wp);
-        a = -(5 / 7) * G * q.ty - Math.sign(b.v) * b.rr * wob * G * (Math.abs(b.v) > 0.005 ? 1 : 0) - b.cd * wob * b.v * Math.abs(b.v)
-            - Math.sign(b.v) * 0.035 * b.v * b.v * Math.abs(q.cn);
-        const ad = -b.v * b.v * q.cn - 35 * b.d - 3.5 * b.vd;  // centrifugal push vs. the channel's restoring curve
-        b.vd += ad * dt;
-      }
+      if (b.dropped) { this.fall(b, dt); continue; }
+      const q = T.sample(b.s), w = T.widthAt(b.s), c = T.chanC(w);
+      const lift = T.inLift(b.s);
       const s0 = b.s;
-      b.v += a * dt; b.s += b.v * dt; b.d += b.vd * dt;
-      const lim = TRACK_W / 2 - b.r;
-      if (Math.abs(b.d) > lim) {
-        const sg = Math.sign(b.d); b.d = sg * lim;
-        if (b.vd * sg > 0) { b.v *= 1 - 0.02 * Math.min(1, Math.abs(b.vd) / 0.3); b.vd = -0.35 * b.vd; }
+      if (lift) {  // chain lift (runs from lights out)
+        b.v += 6 * ((this.gateOpen ? 0.55 : 0) - b.v) * dt; b.vd += (-40 * b.d - 6 * b.vd) * dt; b.air = false;
+      } else if (!b.air) {
+        const slopeS = T.slopeAt(b.s), slopeD = 2 * c * b.d;
+        const wob = 1 + b.wa * Math.sin(6.283 * b.s / b.wl + b.wp), rough = T.roughAt(b.s);
+        let a = -(5 / 7) * G * slopeS - Math.sign(b.v) * b.rr * wob * rough * G * (Math.abs(b.v) > 0.004 ? 1 : 0) - (b.cd + T.dragAt(b.s)) * b.v * Math.abs(b.v);
+        let ad = -(5 / 7) * G * slopeD - b.v * b.v * q.cn - PH.latDamp * b.vd;
+        // pressed against the outer wall in a corner: wall friction scrubs speed
+        const lim = w / 2 - b.r, push = -b.v * b.v * q.cn;
+        if (Math.abs(b.d) >= lim - 1e-4 && Math.sign(push) === Math.sign(b.d)) a -= Math.sign(b.v) * PH.muWall * Math.abs(push);
+        if (Math.abs(b.v) < 0.004 && Math.abs(a) < b.rr * rough * G) a = 0;  // static friction holds it
+        b.v += a * dt; b.vd += ad * dt;
+      } else {
+        b.v -= b.cd * b.v * Math.abs(b.v) * dt; b.vz -= G * dt;
       }
-      // track joints: tiny bumps that make every race different
-      const jn = Math.floor(b.s / this.jointSpacing);
-      if (jn !== Math.floor(s0 / this.jointSpacing) && !T.inLift(b.s)) { b.v *= 1 - 0.008 * rnd(); b.vd += pgauss() * 0.04; }
+      b.s += b.v * dt; b.d += b.vd * dt;
+      // vertical: follow the surface while gravity can keep the marble on it, otherwise fly
+      const Y = T.surfaceY(b.s, b.d);
+      if (!b.air) {
+        // take off where the rolling line curves down faster than gravity can follow (v²κ < -g),
+        // or where the surface drops away (the lip of a jump ramp)
+        if (!lift && (b.v * b.v * T.vcurv(b.s) < -G || Y < b.z - 0.003)) { b.air = true; b.z += b.vz * dt; b.airMax = 0; }
+        else { b.vz = b.v * T.slopeAt(b.s); b.z = Y; }
+      } else {
+        b.z += b.vz * dt;
+        b.airMax = Math.max(b.airMax, b.z - Y);
+        if (b.z <= Y) {
+          const vzs = b.v * T.slopeAt(b.s), vn = b.vz - vzs;
+          if (vn < -0.18) { b.vz = vzs - 0.32 * vn; b.v *= 0.985; b.vd *= 0.9; }
+          else { b.air = false; b.vz = vzs; if (b.airMax > 0.006) this.note(b, "jump", `${b.name} flies ${(b.airMax * 100).toFixed(1)} cm high`); }
+          b.z = Y;
+        }
+      }
+      this.walls(b, w);
+      this.solids(b, dt);
+      // finish line and what happens after it
       if (!b.finished && s0 < this.raceDist && b.s >= this.raceDist) {
         b.finished = true; b.finishT = this.t - dt + dt * (this.raceDist - s0) / Math.max(1e-6, b.s - s0);
         this.finishedCount++;
-        if (!T.closed) b.stopAt = T.L - 0.04 - (this.finishedCount - 1) * 0.0255;
-        else b.goneAt = this.t + 1.2;
       }
-      if (b.goneAt && this.t > b.goneAt) b.gone = true;
-      if (!T.closed && b.s > T.L - 0.02) { b.s = T.L - 0.02; b.v = 0; }
+      if (T.closed && b.finished && b.s > this.raceDist + 0.3) this.drop(b);  // diverted into the collection chute
+      if (!T.closed && b.s > T.L - 0.013) { b.s = T.L - 0.013; if (b.v > 0) b.v = -0.2 * b.v; }
+      if (b.s < 0.01 && !T.closed) { b.s = 0.01; b.v = Math.abs(b.v) * 0.3; }
+      // a marble that has not made 5 cm of progress in 6 s is stuck: a marshal nudges it, as on a real run
+      if (this.gateOpen && !b.finished) {
+        if (b.s > b.best + 0.05) { b.best = b.s; b.bestT = this.t; }
+        else if (this.t - b.bestT > 5) { b.v = 0.9; b.vd = (rnd() < 0.5 ? -1 : 1) * 0.3; b.bestT = this.t; this.note(b, "stuck", `marshal nudges ${b.name} loose`); }
+      }
     }
-    // marble-marble collisions in the (along, across) plane
+    this.collide(); this.collide();
+  }
+  walls(b, w) {
+    // constraint |d| <= w(s)/2 - r; the funnel walls are slanted, so their normal also points along s
+    const T = this.track, lim = w / 2 - b.r;
+    if (Math.abs(b.d) <= lim) return;
+    const sg = Math.sign(b.d), dw = (T.widthAt(b.s + 0.005) - T.widthAt(b.s - 0.005)) / 0.01;
+    let gx = -dw / 2, gy = sg; const gl = Math.hypot(gx, gy); gx /= gl; gy /= gl;  // outward normal
+    const pen = (Math.abs(b.d) - lim) / gl;
+    b.s -= gx * pen; b.d -= gy * pen;
+    const vn = b.v * gx + b.vd * gy;
+    if (vn > 0) {
+      b.v -= (1 + PH.eWall) * vn * gx; b.vd -= (1 + PH.eWall) * vn * gy;
+      const tx = -gy, ty = gx, vt = b.v * tx + b.vd * ty, fr = Math.min(Math.abs(vt), PH.muWall * (1 + PH.eWall) * vn);
+      b.v -= Math.sign(vt) * fr * tx; b.vd -= Math.sign(vt) * fr * ty;
+    }
+  }
+  solids(b, dt) {
+    const T = this.track;
+    for (const o of this.course.solids) {
+      let ds = b.s - o.s0; if (T.closed) ds = ((ds % T.L) + 1.5 * T.L) % T.L - T.L / 2;
+      if (Math.abs(ds) > 0.25) continue;
+      if (b.z - T.surfaceY(b.s, b.d) > o.H) continue;  // flying over it
+      const P = [ds, b.d];
+      const segs = this.segments(o);
+      for (const sgm of segs) {
+        const [ax, ay, bx, by, vx0, vy0, om] = sgm;
+        const ex = bx - ax, ey = by - ay, l2 = ex * ex + ey * ey || 1e-12;
+        const tt = Math.max(0, Math.min(1, ((P[0] - ax) * ex + (P[1] - ay) * ey) / l2));
+        const cx = ax + tt * ex, cy = ay + tt * ey, dx = P[0] - cx, dy = P[1] - cy, dist = Math.hypot(dx, dy), min = b.r + (sgm[7] ?? o.rho);
+        if (dist >= min || dist < 1e-9) continue;
+        const nx = dx / dist, ny = dy / dist;
+        b.s += nx * (min - dist); b.d += ny * (min - dist); P[0] += nx * (min - dist); P[1] += ny * (min - dist);
+        // velocity of the obstacle surface at the contact point (spinner arms move)
+        const ox = vx0 - om * (cy - ay) * (om ? 1 : 0), oy = vy0 + om * (cx - ax) * (om ? 1 : 0);
+        const rvx = b.v - ox, rvy = b.vd - oy, vn = rvx * nx + rvy * ny;
+        if (vn < 0) {
+          const e = o.e, tx = -ny, ty = nx, vt = rvx * tx + rvy * ty;
+          let nvx = rvx - (1 + e) * vn * nx, nvy = rvy - (1 + e) * vn * ny;
+          const fr = Math.min(Math.abs(vt), 0.1 * (1 + e) * Math.abs(vn));
+          if (Math.abs(vt) < 0.02) { const kick = (rnd() < 0.5 ? -1 : 1) * 0.03; nvx += kick * tx; nvy += kick * ty; }  // surface imperfections
+          nvx -= Math.sign(vt) * fr * tx; nvy -= Math.sign(vt) * fr * ty;
+          b.v = nvx + ox; b.vd = nvy + oy;
+          if (o.kind === "bumper") {  // rubber ring + solenoid kick along the contact normal; it fires sideways more than back
+            b.v += o.kick * nx; b.vd += o.kick * ny; if (b.v < -0.35) b.v = -0.35; o.flash = 1;
+          }
+          const hit = Math.abs(vn);
+          if (hit > 0.25) {
+            if (o.kind === "spinner" && b.v < -0.15) this.note(b, "spin", `${b.name} knocked backwards by a spinner`);
+            else if (o.kind === "bumper") this.note(b, "bump", `${b.name} kicked by a bumper`);
+            else if (o.kind === "gate" && !o.start) this.note(b, "gate", `${b.name} held at a gate`);
+          }
+        }
+      }
+    }
+  }
+  segments(o) {  // capsule segments in local (along-track offset, lateral) coordinates; arms rotate
+    const w = TRACK_W;
+    if (o.kind === "post" || o.kind === "bumper") return [[0, o.d0, 0, o.d0, 0, 0, 0]];
+    if (o.kind === "splitter") return [[0, o.d0, o.s1 - o.s0, o.d0, 0, 0, 0]];
+    if (o.kind === "gate" || o.kind === "wall") return o.kind === "gate" && !o.closed ? [] : [[0, -w, 0, w, 0, 0, 0]];
+    if (o.kind === "spinner") {
+      const out = [], th0 = o.phase + o.omega * this.t;
+      for (let k = 0; k < o.arms; k++) { const th = th0 + 6.283 * k / o.arms; out.push([0, o.d0, o.len * Math.cos(th), o.d0 + o.len * Math.sin(th), 0, 0, o.omega]); }
+      out.push([0, o.d0, 0, o.d0, 0, 0, 0, o.hub]);  // hub
+      return out;
+    }
+    return [];
+  }
+  collide() {  // 3-D sphere collisions, glass on glass (e ≈ 0.9)
+    const T = this.track, M = this.m;
     for (let i = 0; i < M.length; i++) for (let j = i + 1; j < M.length; j++) {
       const A = M[i], B = M[j];
-      if (A.gone || B.gone) continue;
-      let ds = B.s - A.s;
-      if (T.closed) ds = ((ds % T.L) + 1.5 * T.L) % T.L - T.L / 2;
-      const dd = B.d - A.d, dist = Math.hypot(ds, dd), min = A.r + B.r;
+      if (A.gone || B.gone || A.dropped || B.dropped) continue;
+      let ds = B.s - A.s; if (T.closed) ds = ((ds % T.L) + 1.5 * T.L) % T.L - T.L / 2;
+      if (Math.abs(ds) > 0.03) continue;
+      const dd = B.d - A.d, dz = (B.z + B.r) - (A.z + A.r), dist = Math.hypot(ds, dd, dz), min = A.r + B.r;
       if (dist >= min || dist < 1e-9) continue;
-      const nx = ds / dist, ny = dd / dist, push = (min - dist) / 2;
-      if (A.stopAt == null || A.s < A.stopAt) { A.s -= nx * push; A.d -= ny * push; }
-      if (B.stopAt == null || B.s < B.stopAt) { B.s += nx * push; B.d += ny * push; }
-      const vrel = (B.v - A.v) * nx + (B.vd - A.vd) * ny;
-      if (vrel < 0) {
-        const J = -(1 + 0.55) * vrel / (1 / A.mass + 1 / B.mass);
-        A.v -= J * nx / A.mass; A.vd -= J * ny / A.mass; B.v += J * nx / B.mass; B.vd += J * ny / B.mass;
+      const nx = ds / dist, ny = dd / dist, nz = dz / dist, pen = (min - dist) / 2;
+      A.s -= nx * pen; A.d -= ny * pen; B.s += nx * pen; B.d += ny * pen;
+      if (A.air) A.z -= nz * pen; if (B.air) B.z += nz * pen;
+      const vrel = (B.v - A.v) * nx + (B.vd - A.vd) * ny + (B.vz - A.vz) * nz;
+      if (vrel < 0) {  // glass on glass; resting contact (a queue at a gate) is inelastic
+        const e = vrel > -0.05 ? 0 : PH.eBall, J = -(1 + e) * vrel / (1 / A.mass + 1 / B.mass);
+        A.v -= J * nx / A.mass; A.vd -= J * ny / A.mass; A.vz -= J * nz / A.mass;
+        B.v += J * nx / B.mass; B.vd += J * ny / B.mass; B.vz += J * nz / B.mass;
+        for (const X of [A, B]) if (!X.air && X.vz - X.v * T.slopeAt(X.s) > 0.25) { X.air = true; X.airMax = 0; }
       }
     }
+  }
+  drop(b) {  // leave the track through the chute: fall in world space into the collection tray
+    const T = this.track, p = T.marbleWorld(b), q = T.sample(b.s);
+    b.dropped = true; b.wp3 = p; b.wv3 = new V3(q.tx * b.v + q.nx * 0.4, 0.2, q.tz * b.v + q.nz * 0.4); b.rest = 0;
+  }
+  fall(b, dt) {
+    b.wv3.y -= G * dt; b.wp3.addScaledVector(b.wv3, dt);
+    if (b.wp3.y < b.r) { b.wp3.y = b.r; b.wv3.y = -0.35 * b.wv3.y; b.wv3.x *= 0.8; b.wv3.z *= 0.8; if (Math.abs(b.wv3.y) < 0.05) { b.rest += dt; if (b.rest > 0.5) b.gone = true; } }
+  }
+  note(b, kind, text) {
+    if ((b.events[kind] ?? -9) > this.t - 2.5) return;
+    b.events[kind] = this.t; this.events.push([this.t, text]);
   }
 }
 
@@ -445,7 +702,7 @@ class Physics {
 class RigCam {
   constructor(id, kind, pos, target, fov, cover, fps, track) {
     // Calibration disagreement between cameras: ±2 mm for segment cameras, ±0.3 mm for the timing camera.
-    Object.assign(this, { id, kind, cover, fps, online: true, phase: Math.random() / fps, next: 0, bias: (Math.random() * 2 - 1) * (kind === "finish" ? 0.0003 : 0.002) });
+    Object.assign(this, { id, kind, cover, fps, online: true, phase: srnd() / fps, next: 0, bias: (srnd() * 2 - 1) * (kind === "finish" ? 0.0003 : 0.002) });
     this.cam = new THREE.PerspectiveCamera(fov, 4 / 3, 0.02, 40);
     this.cam.position.copy(pos); this.cam.lookAt(target); this.cam.updateMatrixWorld(); this.cam.updateProjectionMatrix();
     this.target = target.clone(); this.track = track; this.lastSeen = {};
@@ -489,15 +746,24 @@ function buildRig(track, kind, nSeg = 14) {
 }
 
 const tmpV = new V3(), tmpW = new V3(), tmpR = new V3();
+function segSeg(P, Q, B, H) {  // closest approach of segment P→Q and the vertical segment B→B+H: [distance, u on PQ, v on the post]
+  const dx = Q.x - P.x, dy = Q.y - P.y, dz = Q.z - P.z, wx = P.x - B.x, wy = P.y - B.y, wz = P.z - B.z;
+  const a = dx * dx + dy * dy + dz * dz, b = dy * H, c = H * H, d = dx * wx + dy * wy + dz * wz, e = wy * H, den = a * c - b * b;
+  let u = den > 1e-12 ? (b * e - c * d) / den : 0; u = Math.max(0, Math.min(1, u));
+  let v = (b * u + e) / c; v = Math.max(0, Math.min(1, v));
+  u = Math.max(0, Math.min(1, (v * b - d) / a));
+  const x = wx + u * dx, y = wy + u * dy - v * H, z = wz + u * dz;
+  return [Math.hypot(x, y, z), u, v];
+}
 function detect(cam, phys, faults, frameT) {
   // What the edge node of `cam` would report this frame: a simulated detector with resolution-
   // dependent noise, occlusion by tunnels, other track levels and other marbles, colour noise.
   const T = phys.track, out = [], vis = [];
   const camPos = cam.cam.position;
   for (const b of phys.m) {
-    if (b.gone || !cam.covers(b.s) || T.inTunnel(b.s)) continue;
+    if (b.gone || b.dropped || !cam.covers(b.s) || T.inTunnel(b.s)) continue;
     if (cam.kind === "overhead" && T.coveredAbove(b.s)) continue;
-    const W = T.world(b.s, b.d, b.r, new V3());
+    const W = T.marbleWorld(b);
     tmpV.copy(W).project(cam.cam);
     if (Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1 || tmpV.z > 1) continue;
     const depth = W.distanceTo(camPos);
@@ -516,6 +782,13 @@ function detect(cam, phys, faults, frameT) {
       const sep = Math.acos(Math.min(1, dir.dot(dp))), ro = o.b.r / o.depth, rp = p.b.r / p.depth;
       if (sep < ro + rp) occl = Math.max(occl, Math.min(1, (ro + rp - sep) / (2 * ro)));
     }
+    // posts, bumpers, bollards and spinner hubs standing between the camera and the marble
+    for (const ob of phys.course.solids) {
+      if (!(ob.kind === "post" || ob.kind === "bumper" || ob.kind === "spinner") || Math.abs(T.rel(o.b.s, ob.s0)) > 0.25) continue;
+      const base = T.world(ob.s0, ob.d0, 0); base.y = T.surfaceY(ob.s0, ob.d0);
+      const rho = ob.kind === "spinner" ? ob.hub : ob.rho, [dist, u, v] = segSeg(camPos, o.W, base, ob.H);
+      if (u < 0.97 && dist < rho + o.b.r) occl = Math.max(occl, Math.min(1, (rho + o.b.r - dist) / (2 * o.b.r)) * (v < 1 ? 1 : 0.5));
+    }
     o.occl = occl;
   }
   // Dim lights: the edge node's illumination compensation restores the mean colour, so dimming
@@ -525,20 +798,43 @@ function detect(cam, phys, faults, frameT) {
     const b = o.b;
     if (o.occl > 0.75) continue;
     const Lb = LAB[b.ci][0];
-    if (Math.random() < 0.012 + (faults.dim && Lb < 35 ? 0.35 : 0)) continue;
+    if (srnd() < 0.012 + (faults.dim && Lb < 35 ? 0.35 : 0)) continue;
     const sigma = Math.max(0.0006, o.depth * cam.pxRad * 1.2) * (1 + 1.5 * o.occl);
-    const sMeas = T.wrap(b.s + cam.bias + gauss() * sigma - Math.sign(b.v || 1) * o.occl * b.r * 0.4);
+    // An airborne marble is mapped as if it were rolling: the camera ray is followed down to
+    // rolling height, so a jump shows up as a displacement away from the camera (parallax).
+    const h = b.z - T.surfaceY(b.s, b.d); let ps = 0, pd = 0;
+    if (h > 0.0005) {
+      const dir = o.W.clone().sub(camPos).normalize();
+      if (dir.y < -0.05) { const q = T.sample(b.s), k = h / -dir.y; ps = k * (dir.x * q.tx + dir.y * q.ty + dir.z * q.tz); pd = k * (dir.x * q.nx + dir.z * q.nz); }
+    }
+    const sMeas = T.wrap(b.s + ps + cam.bias + gauss() * sigma - Math.sign(b.v || 1) * o.occl * b.r * 0.4);
+    const sig = jumpZone(T, phys.course, sMeas) ? Math.hypot(sigma, 0.012) : sigma;
     const lab = LAB[b.ci].map((v) => v + gauss() * 2.5 * noiseK);
     const d2 = LAB.map((p) => ((lab[0] - p[0]) ** 2 + (lab[1] - p[1]) ** 2 + (lab[2] - p[2]) ** 2) / 16);  // fixed calibrated models
     const cands = [sMeas];
     if (cam.kind === "overhead") for (const ps of T.partnersOf(b.s)) cands.push(T.wrap(ps + gauss() * sigma));
-    out.push({ cands, sigma, d2, lat: b.d + gauss() * 0.002, ci: b.ci, occl: o.occl, ndc: o.ndc, depth: o.depth });
+    out.push({ cands, sigma: sig, d2, lat: b.d + pd + gauss() * 0.002, ci: b.ci, occl: o.occl, ndc: o.ndc, depth: o.depth });
   }
   cam.lastSeen = {}; for (const d of out) cam.lastSeen[d.ci] = d;
   return out;
 }
 
 // ============================================================ tracker (port of marbletrack/fusion.py)
+// The obstacle layout is part of the track survey. Where an obstacle can reverse or stop a marble
+// in one frame (bumpers, spinners, pins, bollards, gates, splitter noses, jump landings) the
+// tracker expects violent manoeuvres: its process noise is raised there, as after a detected
+// manoeuvre, so the estimate follows a knock-back within a frame or two.
+function impactZones(T, C) {
+  const z = [];
+  for (const o of C.solids) {
+    if (o.start || o.kind === "wall") continue;
+    const reach = o.kind === "bumper" ? 0.14 : o.kind === "spinner" ? 0.1 : o.kind === "splitter" ? 0.08 : 0.07;
+    z.push([o.s0 - reach, (o.s1 ?? o.s0) + reach]);
+  }
+  for (const b of C.bumps) if (b.kicker) z.push([b.s0 + b.len - 0.02, b.s0 + b.len + 0.45]);
+  return z;
+}
+function jumpZone(T, C, s) { for (const b of C.bumps) if (b.kicker) { const x = T.rel(s, b.s0 + b.len); if (x >= -0.02 && x <= 0.45) return true; } return false; }
 function invert(A) {  // small dense matrix inverse (Gauss-Jordan); null if singular
   const n = A.length, M = A.map((r, i) => [...r, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))]);
   for (let c = 0; c < n; c++) {
@@ -580,9 +876,11 @@ class Tracker {
     this.m = phys.m.map((b) => ({ ci: b.ci, name: b.name, x: [0, 0], P: [[1, 0], [0, 1]], t: null, lastT: null, lastS: null, lastV: 0, lastVar: 1e-6, lastLat: 0,
       nObs: 0, finishT: null, finishSig: 0, finishFinal: false, maneuverUntil: -1, placed: false, lastCam: null, hist: [] }));
     this.cams = cams; this.lastFrame = {}; this.online = {}; cams.forEach((c) => (this.online[c.id] = true));
-    this.order = this.m.map((_, i) => i); this.leadSince = new Map(); this.events = [];
+    this.order = this.m.map((_, i) => i); this.leadSince = new Map(); this.contactT = new Map(); this.prevGap = new Map(); this.events = [];
     this.blind = this.computeBlind();
+    this.zones = impactZones(track, phys.course);
   }
+  inZone(P) { const T = this.T; for (const [a, b] of this.zones) { const x = T.rel(P, a); if (x >= 0 && x <= b - a) return true; } return false; }
   computeBlind() {  // track intervals no online camera sees, plus tunnels (and stacked levels, for overhead-only rigs)
     const T = this.T, step = 0.02, n = Math.ceil(T.L / step), zones = [];
     let start = null;
@@ -612,7 +910,7 @@ class Tracker {
   }
   predict(m, t) {
     const dt = t - m.t; if (dt <= 0) return;
-    const q = this.q * (t <= m.maneuverUntil ? 25 : 1);
+    const q = this.q * (t <= m.maneuverUntil || this.inZone(m.x[0]) ? 25 : 1);
     const [[a, b], [c, d]] = m.P;
     m.x = [m.x[0] + dt * m.x[1], m.x[1]];
     const p00 = a + dt * (b + c) + dt * dt * d + q * dt ** 3 / 3, p01 = b + dt * d + q * dt * dt / 2, p11 = d + q * dt;
@@ -736,14 +1034,29 @@ class Tracker {
     const leading = new Map();
     for (const b of racing) for (const a of racing) if (a !== b && leads(b, a)) leading.set(b + ">" + a, this.leadSince.get(b + ">" + a) ?? now);
     this.leadSince = leading;
+    // Two marbles whose estimates were just touching may have collided: a head-on knock swaps their
+    // velocities in one frame and constant-velocity predictions would "pass" them through each
+    // other. Right after contact a pass therefore needs the 100 ms confirmation, never the margin shortcut.
+    for (const a of racing) for (const b of racing) {
+      if (a >= b || M[a].t == null || M[b].t == null) continue;
+      const pk = a + "|" + b, gap = key(a) - key(b), prev = this.prevGap.get(pk);
+      if (Math.abs(gap) < 0.03 || (prev != null && Math.sign(prev) !== Math.sign(gap))) this.contactT.set(pk, now);
+      this.prevGap.set(pk, gap);
+    }
+    const touched = (a, b) => now - (this.contactT.get(Math.min(a, b) + "|" + Math.max(a, b)) ?? -9) < 0.1;
     const confirmed = (b, a) => {
       const k = b + ">" + a; if (!leading.has(k)) return false;
-      return key(b) > key(a) + need(a, b) + this.rankMargin || now - leading.get(k) >= 0.1 || !M[a].placed;
+      return (key(b) > key(a) + need(a, b) + this.rankMargin && !touched(a, b)) || now - leading.get(k) >= 0.1 || !M[a].placed;
     };
     const mayPass = (k) => {
       const a = racing[k], b = racing[k + 1];
       if (confirmed(b, a)) return true;
       if (obs(b) && (st[a] === "coasting" || st[a] === "acquiring")) {
+        // A hidden marble is (barring a knock-back, which would bring it back into view) at least
+        // where it was last seen, and most likely near its prediction: nobody passes it before
+        // getting past the first and close to the second. Holding a place is preferred to showing
+        // a pass that may not have happened.
+        if (M[a].lastS != null && key(b) < Math.max(M[a].lastS + this.rankMargin, key(a) - 0.05)) return false;
         for (let j = k - 1; j >= 0; j--) if (obs(racing[j])) return confirmed(b, racing[j]);
       }
       return false;
@@ -800,23 +1113,35 @@ function showLabel(o, v) { o.visible = v; o.element.classList.toggle("hide", !v)
 let W = null;  // world: everything built for the current race
 
 function trackMeshes(T, root) {
-  const floorPos = [], floorIdx = [], wallPos = [], wallIdx = [];
-  const step = 2;  // every 2 cm
+  // U-channel floor (follows bumps, jump ramps and the course width) with a wall on each side
+  const LAT = 7, floorPos = [], floorCol = [], floorIdx = [], wallPos = [], wallIdx = [];
   const verts = [];
-  for (let i = 0; i <= T.N; i += step) verts.push(i);
-  if (T.closed && verts[verts.length - 1] !== T.N) verts.push(T.N);
-  const hw = TRACK_W / 2 + 0.003;
+  for (let i = 0; i <= T.N; i++) verts.push(i);
+  const base = new THREE.Color(0x9aa1aa), gravel = new THREE.Color(0x6a6256), sand = new THREE.Color(0xc9ab6c), kick = new THREE.Color(0xd9822b), bump = new THREE.Color(0xc9a227), dark = new THREE.Color(0x30343a);
+  const C = T.course, kickAt = (s) => C.bumps.find((b) => b.kicker && T.rel(s, b.s0) >= -0.005 && T.rel(s, b.s0) <= b.len), bumpAt = (s) => C.bumps.find((b) => !b.kicker && T.rel(s, b.s0) >= 0 && T.rel(s, b.s0) <= b.len);
+  const colr = mulberry32(5), tmpC = new THREE.Color();
   verts.forEach((i, k) => {
-    const x = T.px[i], y = T.py[i], z = T.pz[i], nx = T.nx[i], nz = T.nz[i];
-    floorPos.push(x - nx * hw, y, z - nz * hw, x + nx * hw, y, z + nz * hw);
-    for (const sg of [-1, 1]) wallPos.push(x + sg * nx * hw, y, z + sg * nz * hw, x + sg * nx * hw, y + WALL_H, z + sg * nz * hw);
+    const s = i * T.ds, x = T.px[i], z = T.pz[i], nx = T.nx[i], nz = T.nz[i], w = T.widthAt(s), hw = w / 2 + 0.003;
+    const surf = T.surfaceAt(s), kb = kickAt(s), bb = bumpAt(s);
+    for (let j = 0; j < LAT; j++) {
+      const d = -hw + 2 * hw * j / (LAT - 1);
+      floorPos.push(x + d * nx, T.surfaceY(s, Math.max(-w / 2, Math.min(w / 2, d))), z + d * nz);
+      if (surf === "sand") tmpC.copy(sand).multiplyScalar(0.9 + 0.2 * colr());
+      else if (surf === "gravel") tmpC.copy(gravel).multiplyScalar(0.75 + 0.5 * colr());
+      else if (kb) tmpC.copy(T.rel(s, kb.s0) > kb.len - 0.012 ? dark : kick);
+      else if (bb) tmpC.copy(Math.floor(T.rel(s, bb.s0) / 0.0175) % 2 ? dark : bump);
+      else tmpC.copy(base);
+      floorCol.push(tmpC.r, tmpC.g, tmpC.b);
+    }
+    for (const sg of [-1, 1]) { const y = T.surfaceY(s, sg * w / 2); wallPos.push(x + sg * nx * hw, y - 0.002, z + sg * nz * hw, x + sg * nx * hw, y + WALL_H, z + sg * nz * hw); }
     if (k) {
-      const a = 2 * (k - 1); floorIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      const a = LAT * (k - 1);
+      for (let j = 0; j + 1 < LAT; j++) floorIdx.push(a + j, a + j + 1, a + LAT + j, a + j + 1, a + LAT + j + 1, a + LAT + j);
       const w0 = 4 * (k - 1); for (const o of [0, 2]) wallIdx.push(w0 + o, w0 + o + 1, w0 + o + 4, w0 + o + 1, w0 + o + 5, w0 + o + 4);
     }
   });
-  const mk = (pos, idx, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; root.add(m); return m; };
-  mk(floorPos, floorIdx, new THREE.MeshStandardMaterial({ color: 0x9aa1aa, roughness: 0.55, metalness: 0.1, side: THREE.DoubleSide }));
+  const mk = (pos, idx, mat, col) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); if (col) g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; root.add(m); return m; };
+  mk(floorPos, floorIdx, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.55, metalness: 0.1, side: THREE.DoubleSide }), floorCol);
   mk(wallPos, wallIdx, new THREE.MeshStandardMaterial({ color: 0xc9d0da, roughness: 0.35, metalness: 0.15, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
   // supports
   const supMat = new THREE.MeshStandardMaterial({ color: 0x55606c, roughness: 0.6, metalness: 0.3 });
@@ -849,7 +1174,7 @@ function trackMeshes(T, root) {
   for (let c = 0; c < cells; c++) for (let r = 0; r < 2; r++) {
     const g = new THREE.PlaneGeometry(TRACK_W / cells, 0.006); const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: (c + r) % 2 ? 0x111111 : 0xf4f4f4, side: THREE.DoubleSide }));
     const off = -TRACK_W / 2 + (c + 0.5) * TRACK_W / cells;
-    const p = T.world(T.finishS + (r - 0.5) * 0.006, off, 0.0015); m.position.copy(p);
+    const p = T.world(T.finishS + (r - 0.5) * 0.006, off, 0); p.y = T.surfaceY(T.finishS, off) + 0.0012; m.position.copy(p);
     m.lookAt(p.clone().add(UP)); m.rotateZ(Math.atan2(fq.tx, fq.tz)); root.add(m);
   }
   const fl = label(T.closed ? "START / FINISH" : "FINISH", "map"); fl.position.copy(T.world(T.finishS, 0, 0.07)); root.add(fl);
@@ -862,14 +1187,64 @@ function trackMeshes(T, root) {
   return cl;
 }
 
+function obstacleFrame(T, s, d, h) {  // a group sitting on the track at (s, d), x along the track, z across it
+  const q = T.sample(s), g = new THREE.Group(), t = new V3(q.tx, q.ty, q.tz).normalize(), n = new V3(q.nx, 0, q.nz).normalize();
+  const up = new V3().crossVectors(n, t).normalize();
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(t, up, n));
+  g.position.set(q.x + d * q.nx, T.surfaceY(s, d) + h, q.z + d * q.nz);
+  return g;
+}
+function courseMeshes(T, C, root) {
+  const metal = new THREE.MeshStandardMaterial({ color: 0xb9c2ce, roughness: 0.25, metalness: 0.8 });
+  const red = new THREE.MeshStandardMaterial({ color: 0xd04a3a, roughness: 0.4 }), white = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.4 });
+  const gateMat = new THREE.MeshStandardMaterial({ color: 0x3c4652, roughness: 0.4, metalness: 0.6 }), startMat = new THREE.MeshStandardMaterial({ color: 0xf2a93b, roughness: 0.4, metalness: 0.3 });
+  const cyl = (r, h, m, seg = 16) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), m); o.castShadow = true; o.receiveShadow = true; return o; };
+  const box = (x, y, z, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(x, y, z), m); o.castShadow = true; o.receiveShadow = true; return o; };
+  for (const o of C.solids) {
+    let g;
+    if (o.kind === "post") {
+      g = obstacleFrame(T, o.s0, o.d0, o.H / 2);
+      if (o.bollard) { for (let k = 0; k < 3; k++) { const c = cyl(o.rho, o.H / 3, k % 2 ? white : red); c.position.y = -o.H / 3 + k * o.H / 3; g.add(c); } }
+      else g.add(cyl(o.rho, o.H, metal, 10));
+    } else if (o.kind === "bumper") {
+      g = obstacleFrame(T, o.s0, o.d0, o.H / 2);
+      o.mat = new THREE.MeshStandardMaterial({ color: 0x2a7fd4, emissive: 0x3aa0ff, emissiveIntensity: 0.25, roughness: 0.3 });
+      g.add(cyl(o.rho, o.H, o.mat, 24));
+      const cap = cyl(o.rho * 1.15, 0.004, white, 24); cap.position.y = o.H / 2; g.add(cap);
+    } else if (o.kind === "splitter") {
+      g = obstacleFrame(T, (o.s0 + o.s1) / 2, o.d0, o.H / 2);
+      g.add(box(o.s1 - o.s0, o.H, 2 * o.rho, white));
+      for (const e of [-1, 1]) { const c = cyl(o.rho, o.H, white, 10); c.position.x = e * (o.s1 - o.s0) / 2; g.add(c); }
+    } else if (o.kind === "spinner") {
+      g = obstacleFrame(T, o.s0, o.d0, 0);
+      const hub = cyl(o.hub, o.H + 0.01, metal); hub.position.y = (o.H + 0.01) / 2; g.add(hub);
+      const arms = new THREE.Group(); arms.position.y = o.H * 0.55; g.add(arms); o.arms3 = arms;
+      for (let k = 0; k < o.arms; k++) {
+        const holder = new THREE.Group(); holder.rotation.y = -6.2832 * k / o.arms;
+        const a = box(o.len, 0.006, 2 * o.rho, red); a.position.x = o.len / 2; holder.add(a); arms.add(holder);
+      }
+    } else if (o.kind === "gate") {
+      g = obstacleFrame(T, o.s0, 0, 0);
+      const w = TRACK_W + 0.008, bar = box(0.005, o.H, w, o.start ? startMat : gateMat); bar.position.y = o.H / 2; g.add(bar); o.bar3 = bar;
+      for (const e of [-1, 1]) { const p = box(0.012, o.H * 2.4, 0.008, gateMat); p.position.set(0, o.H * 1.2, e * (w / 2 + 0.004)); g.add(p); }
+    } else if (o.kind === "wall") {
+      g = obstacleFrame(T, o.s0, 0, o.H / 2); g.add(box(0.008, o.H, TRACK_W + 0.008, gateMat));
+    }
+    if (g) root.add(g);
+  }
+}
+function gateClosedAt(g, t, raceT0) { return g.start ? raceT0 == null || t < raceT0 : ((t / g.period + g.phase) % 1) > g.open; }
+
 function buildWorld(seed) {
   if (W) { scene.remove(W.root); W.labels.forEach((l) => l.element.remove()); }
   const mapKey = $("map").value, mdef = MAPS[mapKey];
   const T = new Track(mdef.build());
-  const phys = new Physics(T, +$("count").value, +$("laps").value, seed, +$("chaos").value);
+  srnd = mulberry32(seed ^ 0x5bd1e995);
+  const phys = new Physics(T, +$("count").value, +$("laps").value, seed, +$("chaos").value, $("obstacles").checked, mapKey);
   const cams = buildRig(T, $("rig").value);
   const root = new THREE.Group(); scene.add(root);
   const centerline = trackMeshes(T, root);
+  courseMeshes(T, phys.course, root);
   const box = new THREE.Box3(); for (let i = 0; i <= T.N; i += 10) box.expandByPoint(new V3(T.px[i], T.py[i], T.pz[i]));
   const c = box.getCenter(new V3()), sz = box.getSize(new V3());
   sun.position.set(c.x - 2, c.y + 6, c.z + 3); sun.target.position.copy(c);
@@ -907,6 +1282,8 @@ function buildWorld(seed) {
     logMsg(`Palette check: closest pair ${worst[1]}/${worst[2]} d² ${worst[0].toFixed(0)} ${worst[0] >= 50 ? "≥ 50 ✓" : "< 50: would be rejected at calibration"}`, worst[0] >= 50 ? "ok" : "bad");
   }
   logMsg(`${mdef.name} · ${phys.m.length} marbles · ${(T.L).toFixed(1)} m${mdef.laps ? ` × ${phys.laps} laps` : ""} · ${mdef.note}`, "amb");
+  logMsg(phys.course.log.length ? `Course (seed ${seed}): ${phys.course.log.join(" · ")}` : `Course (seed ${seed}): clean track, no obstacles`, "");
+  $("seedLbl").textContent = `seed ${seed}`;
   buildCamGrid();
   applyToggles();
   fitView(true);
@@ -918,17 +1295,21 @@ function newMetrics() { return { evals: 0, ok: 0, okLat: 0, phantom: 0, shown: 0
 // ============================================================ race flow
 let playing = true, speed = 1, lastTs = null, simAcc = 0, replayMode = false, replayIdx = 0;
 function startLights() {
+  // The marbles roll down onto the closed start gate while the five lights come on; the gate drops
+  // at lights out. Timing runs on simulation time, so the same seed gives the same race.
   const L = $("lights"), lamps = [...L.children]; L.hidden = false; lamps.forEach((l) => l.classList.remove("on"));
-  W.state = "grid"; W.lightsT = 0;
+  W.state = "grid"; W.lightsOutT = 0.55 * 5 + 0.6 + (W.seed % 997) / 997 * 0.4;
 }
-function updateLights(dt) {
+function updateLights() {
   if (W.state !== "grid") return;
-  W.lightsT += dt;
-  const lamps = [...$("lights").children], n = Math.min(5, Math.floor(W.lightsT / 0.55));
+  const lamps = [...$("lights").children], n = Math.min(5, Math.floor(W.phys.t / 0.55));
   lamps.forEach((l, k) => l.classList.toggle("on", k < n));
-  if (W.lightsT > 0.55 * 5 + 0.6 + Math.random() * 0.02) {
-    $("lights").hidden = true; W.state = "racing"; W.phys.gateOpen = true; W.raceT0 = W.phys.t; logMsg("Lights out: race started", "ok");
-  }
+}
+function lightsOut() {
+  const P = W.phys;
+  $("lights").hidden = true; W.state = "racing"; P.gateOpen = true; W.raceT0 = P.t;
+  P.m.forEach((b) => { b.best = b.s; b.bestT = P.t; });
+  logMsg("Lights out: start gate down, race started", "ok");
 }
 
 function simulate(dt) {
@@ -936,19 +1317,25 @@ function simulate(dt) {
   simAcc += dt;
   while (simAcc >= sub) {
     simAcc -= sub;
+    if (W.state === "grid" && P.t >= W.lightsOutT) lightsOut();
     P.step(sub);
     for (const c of W.cams) {  // each camera fires on its own clock (unsynchronised)
       if (P.t < c.next) continue;
       c.next = (Math.floor(P.t * c.fps) + 1) / c.fps + c.phase;
       if (!c.online) continue;
-      if (W.faults.jitter && Math.random() < 0.12) continue;  // frame lost in the network
+      if (W.faults.jitter && srnd() < 0.12) continue;  // frame lost in the network
       const dets = detect(c, P, W.faults, P.t);
       W.metrics.dets += dets.length;
       W.tracker.process(P.t, c.id, dets);
     }
     if (P.t - W.lastEval >= 1 / 30) { W.lastEval = P.t; evaluate(); }
   }
-  if (W.state === "racing" && (P.finishedCount === P.m.length || P.t - W.raceT0 > 240)) finishRace();
+  // the chequered flag falls when the tracker has every finish (what race control would see),
+  // with a short grace after the last true crossing, or at the 4-minute cap
+  if (W.state === "racing") {
+    if (P.finishedCount === P.m.length) W.allInT ??= P.t;
+    if (W.tracker.m.every((m) => m.finishT != null) || P.t - (W.allInT ?? Infinity) > 2 || P.t - W.raceT0 > 240) finishRace();
+  }
 }
 
 function truthProgress(b) { return b.s; }
@@ -990,8 +1377,9 @@ function evaluate() {
     W.prevOrder = order;
     for (const e of board) if (e.status === "tracking") { const err = e.m.x[0] - truth[e.i]; met.sq += err * err; met.nsq++; if (Math.abs(err) > 0.15) met.idErr++; }
   }
+  while (W.phys.events.length) { const [t, text] = W.phys.events.shift(); if (W.state === "racing") logMsg(`${fmtT(t)} ${text}`, ""); }
   // instant replay buffer (30 s)
-  W.replay.push({ t: now, s: M.map((b) => b.s), d: M.map((b) => b.d), gone: M.map((b) => b.gone), est: tr.m.map((m) => (m.t != null ? m.x[0] : null)),
+  W.replay.push({ t: now, s: M.map((b) => b.s), d: M.map((b) => b.d), z: M.map((b) => b.z), wp: M.map((b) => (b.dropped ? b.wp3.toArray() : null)), gone: M.map((b) => b.gone), est: tr.m.map((m) => (m.t != null ? m.x[0] : null)),
     lat: tr.m.map((m) => m.lastLat), board: board.map((e) => ({ i: e.i, status: e.status, photo: e.photo, gap: e.gap })), online: W.cams.map((c) => tr.online[c.id]) });
   if (W.replay.length > 900) W.replay.shift();
   M.forEach((b, k) => { const h = W.speedHist[k]; h.push([now, b.v, tr.m[k].t != null ? tr.m[k].x[1] : null]); if (h.length > 300) h.shift(); });
@@ -1014,9 +1402,20 @@ function finishRace() {
     return `<li>${e.m.name} · ${e.m.finishT != null ? (e.m.finishT - W.raceT0).toFixed(3) + " s" : "—"}${e.photo ? " · PHOTO" : ""} ${okk ? "✓" : "✕"}</li>`;
   }).join("");
   const exact = board.every((e, k) => truthOrder[k] === e.i || e.photo);
-  $("banner").innerHTML = `<h3>Chequered flag</h3><ol>${rows}</ol><p class="muted">Tracker result ${exact ? "matches" : "differs from"} the true finishing order${board.some((e) => e.photo) ? "; photo-finish pairs go to review" : ""}.</p><button id="again" class="primary" type="button">New race</button>`;
+  const hist = saveResult({ when: Date.now(), map: W.mdef.name, seed: W.seed, podium: truthOrder.slice(0, 3).map((i) => M[i].name), win: truthOrder.length ? M[truthOrder[0]].finishT - W.raceT0 : null, ok: exact });
+  const wins = {}; hist.forEach((h) => h.podium[0] && (wins[h.podium[0]] = (wins[h.podium[0]] || 0) + 1));
+  const table = Object.entries(wins).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([n, w]) => `${n} ${w}`).join(" · ");
+  const histHtml = hist.length > 1 ? `<div class="hist">Your last ${hist.length} races · wins: ${table}<br>${hist.slice(-4).reverse().map((h) => `${h.map}: ${h.podium[0] || "—"} ${h.win != null ? h.win.toFixed(2) + " s" : ""}`).join(" · ")}</div>` : "";
+  $("banner").innerHTML = `<h3>Chequered flag</h3><ol>${rows}</ol><p class="muted">Tracker result ${exact ? "matches" : "differs from"} the true finishing order${board.some((e) => e.photo) ? "; photo-finish pairs go to review" : ""}.</p>${histHtml}<button id="again" class="primary" type="button">New race</button>`;
   $("banner").hidden = false; $("again").onclick = () => newRace();
   logMsg(`Race over · tracker result ${exact ? "correct" : "differs"}`, exact ? "ok" : "bad");
+}
+function saveResult(r) {  // per-browser race history; the page works without storage
+  let h = [];
+  try { h = JSON.parse(localStorage.getItem("marble-sim-history") || "[]"); } catch (e) { h = []; }
+  h.push(r); h = h.slice(-50);
+  try { localStorage.setItem("marble-sim-history", JSON.stringify(h)); } catch (e) { /* storage unavailable */ }
+  return h;
 }
 const fmtT = (t) => ((t - (W.raceT0 ?? 0)).toFixed(2) + " s").padStart(8, " ");
 
@@ -1039,8 +1438,7 @@ function zoomBy(f) {
   $("zoom").value = Math.round(Math.log(zoomF) / Math.log(6) * 100);
 }
 function marbleWorld(k, out = new V3()) {
-  const b = W.phys.m[k], sc = +$("mscale").value;
-  return W.T.world(b.s, b.d, b.r * sc, out);
+  return W.T.marbleWorld(W.phys.m[k], +$("mscale").value, out);
 }
 function updateCamera(dt) {
   const T = W.T;
@@ -1117,7 +1515,7 @@ function render() {
     if (!f.rc.online) continue;
     for (const k in f.rc.lastSeen) {
       const d = f.rc.lastSeen[k], b = W.phys.m.find((m) => m.ci === +k); if (!b || b.gone) continue;
-      const p = W.T.world(b.s, b.d, b.r * +$("mscale").value).project(f.rc.cam);
+      const p = W.T.marbleWorld(b, +$("mscale").value).project(f.rc.cam);
       const px = f.x + (p.x + 1) / 2 * f.w, py = f.y + (1 - p.y) / 2 * f.h;
       const rad = Math.max(4, b.r * +$("mscale").value / d.depth * (f.h / 2) / Math.tan(THREE.MathUtils.degToRad(f.rc.cam.fov / 2)));
       if (px < f.x || px > f.x + f.w || py < f.y + 16 || py > f.y + f.h) continue;
@@ -1134,8 +1532,8 @@ function updateScene(dt, frame) {
   const rankOf = new Map(board.map((e, k) => [e.i, k + 1])), stOf = new Map(board.map((e) => [e.i, e.status]));
   M.forEach((b, k) => {
     const me = W.meshes[k];
-    const s = frame ? frame.s[k] : b.s, d = frame ? frame.d[k] : b.d, gone = frame ? frame.gone[k] : b.gone;
-    const p = T.world(s, d, b.r * sc);
+    const s = frame ? frame.s[k] : b.s, gone = frame ? frame.gone[k] : b.gone;
+    const p = frame ? (frame.wp[k] ? new V3().fromArray(frame.wp[k]) : T.marbleWorld({ s, d: frame.d[k], z: frame.z[k], r: b.r }, sc)) : T.marbleWorld(b, sc);
     if (me.lastS != null && !frame) {  // rolling: rotate about (up × direction of travel)
       const q = T.sample(s), ax = new V3().crossVectors(UP, new V3(q.tx, q.ty, q.tz)).normalize(), ang = (s - me.lastS) / (b.r * sc);
       if (Math.abs(ang) < 3) me.sphere.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ax, ang));
@@ -1145,7 +1543,8 @@ function updateScene(dt, frame) {
     const est = frame ? frame.est[k] : tr.m[k].t != null ? tr.m[k].x[0] : null, st = stOf.get(k);
     me.box.visible = !gone && est != null && st !== "unseen" && $("tBoxes").checked;
     if (est != null) {
-      const q = T.sample(est); me.box.position.copy(T.world(est, frame ? frame.lat[k] : tr.m[k].lastLat, b.r * sc)); me.box.rotation.set(0, -Math.atan2(q.tz, q.tx), 0);
+      const q = T.sample(est), lat = frame ? frame.lat[k] : tr.m[k].lastLat;
+      me.box.position.copy(T.world(est, lat, 0)); me.box.position.y = T.surfaceY(est, lat) + b.r * sc; me.box.rotation.set(0, -Math.atan2(q.tz, q.tx), 0);
       me.box.scale.setScalar(b.r * sc * 1.18); me.box.material.opacity = st === "tracking" || st === "finished" ? 1 : 0.35;
     }
     me.label.position.copy(p).add(new V3(0, b.r * sc + 0.02, 0));
@@ -1163,7 +1562,14 @@ function updateScene(dt, frame) {
     showLabel(rc.label, $("tFrustums").checked && $("tLabels").checked);
     rc.helper.material.color && rc.helper.material.color.set(on ? 0x6fcf8e : 0xef6b5e);
   }
-  if (W.liftTex) W.liftTex.offset.x -= dt * (playing ? speed : 0) * 0.55 / 0.05;
+  if (W.liftTex && W.phys.gateOpen) W.liftTex.offset.x -= dt * (playing ? speed : 0) * 0.55 / 0.05;
+  // moving obstacles: spinners turn, piston gates rise and fall, bumpers flash when hit
+  const t = frame ? frame.t : W.phys.t;
+  for (const o of W.phys.course.solids) {
+    if (o.arms3) o.arms3.rotation.y = -(o.phase + o.omega * t);
+    if (o.bar3) { const up = gateClosedAt(o, t, W.raceT0) ? 0 : o.H + 0.008; o.bar3.position.y += (o.H / 2 + up - o.bar3.position.y) * Math.min(1, dt * 18); }
+    if (o.mat) { o.mat.emissiveIntensity = 0.25 + 2.5 * o.flash; o.flash *= Math.exp(-dt * 6); }
+  }
 }
 
 // ============================================================ side panels
@@ -1205,7 +1611,7 @@ function renderTelemetry() {
   $("tele").innerHTML = [
     ["Speed (true)", b.v.toFixed(2) + " m/s"], ["Speed (est.)", m.t != null ? m.x[1].toFixed(2) + " m/s" : "—"], ["Status", st],
     ["Progress", (m.t != null ? m.x[0] : 0).toFixed(2) + " m"], ["Error", err != null ? err.toFixed(1) + " cm" : "—"], ["Seen by", m.lastCam || "—"],
-    ["Lateral", (b.d * 1000).toFixed(0) + " mm"], ["Height", W.T.sample(b.s).y.toFixed(2) + " m"], ["Finish", b.finishT != null ? (b.finishT - W.raceT0).toFixed(3) + " s" : "—"],
+    ["Lateral", (b.d * 1000).toFixed(0) + " mm"], ["Height", W.T.sample(b.s).y.toFixed(2) + " m" + (b.air ? ` · air ${((b.z - W.T.surfaceY(b.s, b.d)) * 1000).toFixed(0)} mm` : "")], ["Finish", b.finishT != null ? (b.finishT - W.raceT0).toFixed(3) + " s" : "—"],
   ].map(([x, v]) => `<div><span>${x}</span><strong>${v}</strong></div>`).join("");
   $("teleNote").textContent = st === "coasting" ? "Hidden: the tracker predicts it through the blind zone and will not let it gain places until a camera sees it." :
     st === "acquiring" ? "Just appeared: needs three sightings before its speed is trusted." : "Line: true speed. Dots: tracker's estimate. Last 10 s.";
@@ -1249,6 +1655,9 @@ function drawMinimap(frame) {
     mctx.lineWidth = 5; mctx.beginPath(); mctx.moveTo(...P(T.px[i], T.pz[i])); mctx.lineTo(...P(T.px[j], T.pz[j])); mctx.stroke();
   }
   const f = T.sample(T.finishS); mctx.fillStyle = "#fff"; mctx.fillRect(P(f.x, f.z)[0] - 3, P(f.x, f.z)[1] - 3, 6, 6);
+  const C = W.phys.course;  // obstacles: grey dots, jump ramps: orange
+  mctx.fillStyle = "#c9d0da"; for (const o of C.solids) { if (o.start || o.kind === "wall") continue; const q = T.sample(o.s0), [x, y] = P(q.x, q.z); mctx.fillRect(x - 1.5, y - 1.5, 3, 3); }
+  mctx.fillStyle = "#f2a93b"; for (const b of C.bumps) if (b.kicker) { const q = T.sample(b.s0 + b.len), [x, y] = P(q.x, q.z); mctx.beginPath(); mctx.arc(x, y, 3.5, 0, 7); mctx.fill(); }
   W.phys.m.forEach((b, k) => {
     const gone = frame ? frame.gone[k] : b.gone; if (gone) return;
     const s = frame ? frame.s[k] : b.s, q = T.sample(s), [x, y] = P(q.x, q.z);
@@ -1305,7 +1714,7 @@ $("speed").addEventListener("change", (e) => (speed = +e.target.value));
 function newRace(seed) { exitReplay(); $("banner").hidden = true; buildWorld(seed ?? Math.floor(Math.random() * 1e9)); W.mmX = null; if (!playing) togglePlay(); }
 $("newRace").addEventListener("click", () => newRace());
 $("restart").addEventListener("click", () => newRace(W.seed));
-["map", "count", "laps", "rig", "chaos"].forEach((id) => $(id).addEventListener("change", () => newRace(W.seed)));
+["map", "count", "laps", "rig", "chaos", "obstacles"].forEach((id) => $(id).addEventListener("change", () => newRace(W.seed)));
 $("fCam").addEventListener("click", () => {
   const board = W.tracker.leaderboard(W.phys.t), lead = (board.find((e) => e.status !== "finished") || board[0]).i;
   const c = W.cams.find((c) => c.online && c.kind !== "finish" && c.covers(W.phys.m[lead].s)) || W.cams.find((c) => c.online);
@@ -1355,8 +1764,8 @@ function loop(ts) {
     frame = W.replay[Math.floor(replayIdx)];
     $("clock").textContent = "REPLAY " + (frame.t - (W.raceT0 ?? 0)).toFixed(2) + " s";
   } else if (playing) {
-    if (W.state === "grid") updateLights(dt);
-    else simulate(dt * speed);
+    simulate(dt * speed);
+    updateLights();
     $("clock").textContent = W.state === "grid" ? "GRID" : Math.max(0, W.phys.t - (W.raceT0 ?? W.phys.t)).toFixed(2) + " s";
   }
   updateScene(dt, frame);
@@ -1369,8 +1778,9 @@ function loop(ts) {
 
 // ============================================================ boot
 Object.entries(MAPS).forEach(([k, m], i) => { const o = document.createElement("option"); o.value = k; o.textContent = `${i + 1}. ${m.name}`; $("map").append(o); });
-$("map").value = location.hash && MAPS[location.hash.slice(1)] ? location.hash.slice(1) : "grandprix";
+const [hMap, hSeed] = location.hash.slice(1).split("/");
+$("map").value = MAPS[hMap] ? hMap : "grandprix";
 resize();
-buildWorld(20261014);
+buildWorld(+hSeed > 0 ? +hSeed : Math.floor(Math.random() * 1e9));
 requestAnimationFrame(loop);
 </script>

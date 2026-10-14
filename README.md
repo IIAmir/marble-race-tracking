@@ -29,9 +29,20 @@ publishes a leaderboard in which no marble can gain a place while unseen.
 
 A self-contained browser app that simulates races live and tracks them live:
 
-* **Physics**: marbles roll under gravity (5/7 g·slope for a rolling sphere) with rolling
-  resistance, drag, wall rubbing in corners, track-joint bumps, marble-to-marble collisions and
-  per-marble grip that varies along the track (the *Chaos* setting).
+* **Every race is different**: each new race draws a fresh seed (shown in the top bar) for the
+  starting order, each marble's size (±4 %), grip and wobble, and the whole obstacle course.
+  *Restart* replays the same seed exactly; `#alpine/1234` in the URL opens a given race.
+* **Physics**: glass marbles roll under gravity (5/7 g·slope for a rolling sphere) in a U-shaped
+  channel, with rolling resistance, air drag, wall friction in corners and 3-D marble-to-marble
+  collisions (restitution 0.88). They take off where the track falls away faster than gravity can
+  follow (v²κ < −g), fly ballistically and bounce on landing. The grid rolls down onto a closed
+  start gate that drops at lights out; lap races divert finishers into a collection chute; open
+  tracks end in a sand trap and an end wall.
+* **Obstacles** (toggle in the top bar): pin fields, bollard chicanes, rotating spinners (3–4 arms,
+  random speed and direction), pinball bumpers with a solenoid kick, lane splitters, timed piston
+  gates, speed bumps, jump ramps, single-file funnels and gravel strips (a speed-dependent loss).
+  Obstacle sections are widened as on real runs. A marble that makes no progress for 5 s is freed
+  by a marshal nudge, logged in race control.
 * **Five maps**: Serpentine Table, Alpine Descent (hairpins, three tunnels), Spiral Tower (stacked
   levels the overhead camera cannot see), Figure-Eight Bridge and Grand Prix (lap races with a
   chain lift).
@@ -41,15 +52,23 @@ A self-contained browser app that simulates races live and tracks them live:
 * **Tracker**: a JavaScript port of `marbletrack/fusion.py` (colour + motion assignment with the
   Hungarian algorithm, Kalman filter on track progress, blind zones, camera health, confirmed
   overtakes, least-squares finish timing, photo-finish flags), scored against the physics live.
-  It adds one refinement found by fault-injection testing: a marble re-acquired after a long gap
-  restarts from its average speed across the gap and must be seen three times before it can gain
-  places.
+  The re-acquisition rule found by fault-injection testing (restart from the average speed
+  across a long gap, three fresh sightings before gaining places) is now in the Python engine too.
+  The obstacle course adds three simulator-only refinements, each found by a failing race:
+  the surveyed obstacle layout raises process noise where a marble can be reversed in one frame
+  and widens measurement noise after jump ramps (an airborne marble is mapped with parallax);
+  a pass between two marbles whose estimates were just touching (a head-on knock swaps their
+  velocities) waits for the 100 ms confirmation; and a visible marble may not pass a hidden one
+  before reaching where it was last seen and getting within 5 cm of its prediction.
+  The camera simulation adds airborne parallax and occlusion by posts and bumpers.
 * **Views**: free orbit with zoom (wheel, buttons, slider, double-click to focus), follow leader,
   follow selected, a TV director that cuts between rig cameras, overhead, finish camera; live
   camera feeds with detection boxes; a clickable minimap coloured by camera coverage.
-* **Race control**: F1 start lights, marble count, laps, chaos, speed and slow motion, instant
-  replay with scrubber, fault injection (kill camera, dim lights, network jitter), timing tower
-  with true positions, telemetry, live tracker-vs-truth metrics, palette separation check.
+* **Race control**: F1 start lights, marble count, laps, chaos, obstacles on/off, speed and slow
+  motion, instant replay with scrubber, fault injection (kill camera, dim lights, network jitter),
+  timing tower with true positions, telemetry (including air height), live tracker-vs-truth
+  metrics, palette separation check, a log of course features and physics events (jumps, bumper
+  kicks, knock-backs, marshal nudges), and a race history with win counts kept in your browser.
 * **Keys**: Space pause · R restart · N new race · 1–5 map · V cycle view · F follow selected ·
   +/− zoom · [ ] previous/next marble.
 
