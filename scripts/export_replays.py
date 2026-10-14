@@ -10,9 +10,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from marbletrack.edgecases import EDGE_CASES  # noqa: E402
 from marbletrack.race import SCENARIOS, run_race  # noqa: E402
 
-DEFAULT = [("single", "nominal"), ("multi", "camera_failure"), ("multi", "worst_case"), ("single", "pack")]
+DEFAULT = [("single", "nominal"), ("multi", "camera_failure"), ("multi", "corner_duel"), ("multi", "photo_finish"),
+           ("multi", "backward_slip"), ("multi", "worst_case")]
 
 
 def main():
@@ -22,9 +24,10 @@ def main():
     a = ap.parse_args()
     out = {}
     for mode, sc in DEFAULT:
-        r = run_race(mode, seed=a.seed, scenario=sc, record=True)
+        scenario = EDGE_CASES.get(sc) or SCENARIOS[sc]
+        r = run_race(mode, seed=a.seed, scenario=scenario, record=True)
         rp = r.replay
-        rp.update(mode=mode, scenario=sc, description=SCENARIOS[sc].description,
+        rp.update(mode=mode, scenario=sc, description=scenario.description,
                   summary={k: getattr(r, k) for k in ("rank_accuracy", "rank_accuracy_all", "final_order_correct",
                                                       "final_order_strict", "photo_finishes", "finish_err_ms_max",
                                                       "pos_err_cm_rms", "id_errors")},

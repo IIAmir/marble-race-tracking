@@ -26,6 +26,7 @@ class MarbleState:
     last_obs_v: float = 0.0
     last_obs_r_px: float = 0.0  # variance (m^2) of the last observation from pixel noise alone
     last_obs_cam: str | None = None
+    last_color: tuple[float, float] = (0.0, 0.0)  # (own colour d2, best rival d2) of the last match
     finish_time: float | None = None
     finish_sigma: float = 0.0  # 1-sigma uncertainty of finish_time (s)
     finish_final: bool = False  # provisional until the refinement window has passed
@@ -376,6 +377,9 @@ class FusionEngine:
         for i, j in zip(rows, cols):
             if cost[i, j] < _INF:
                 self._update(self.marbles[j], t, *choice[i, j], cam_id=cam_id)
+                d2 = detections[i].color_d2
+                rival = float(np.min(np.delete(d2, j))) if len(d2) > 1 else float("inf")
+                self.marbles[j].last_color = (float(d2[j]), rival)
         self._settle_finishes()
 
     def tick(self, now: float) -> None:

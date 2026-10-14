@@ -147,7 +147,7 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
     ok_instants = ok_all_instants = total_instants = 0
     sq_err, n_err, id_errors = 0.0, 0, 0
     tie = 4 * cfg.marble_radius  # two diameters: closer than this counts as a tie
-    replay = ({"t": [], "truth": [], "lat": [], "est": [], "v": [], "obs_s": [], "obs_cam": [], "status": [],
+    replay = ({"t": [], "truth": [], "lat": [], "est": [], "v": [], "obs_s": [], "obs_cam": [], "color": [], "status": [],
                "order": [], "cams": []} if record else None)
     cam_index = {c.cam_id: k for k, c in enumerate(cams)}
 
@@ -190,6 +190,8 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
             replay["v"].append([round(est[i].speed_mps, 3) for i in ids])
             replay["obs_s"].append([None if m.last_obs_s is None else round(m.last_obs_s, 4) for m in engine.marbles])
             replay["obs_cam"].append([cam_index.get(m.last_obs_cam, -1) for m in engine.marbles])
+            replay["color"].append([[round(m.last_color[0], 1), round(min(m.last_color[1], 9999.0), 1)]
+                                    for m in engine.marbles])
             replay["status"].append([est[i].status for i in ids])
             replay["order"].append([ids.index(e.marble_id) for e in board])
             replay["cams"].append([int(v) for v in engine.camera_status().values()])
@@ -258,6 +260,8 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
             est_finish=[est[i] for i in ids],
             finish_sigma=[m.finish_sigma for m in engine.marbles],
             photo=[next(e.photo_finish for e in board if e.marble_id == i) for i in ids],
+            rank_margin=engine.rank_margin,
+            fps=fps,
         )
     return RaceReport(
         scenario=sc.name,

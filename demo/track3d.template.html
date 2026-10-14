@@ -1,0 +1,576 @@
+<title>Marble Race Control 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: race-control console. 3D track view on the left, timing tower + "how it is computed"
+   panel on the right, transport bar along the bottom. Deliberately one dark look (control room). */
+:root {
+  --bg: #0f141b;          /* control-room slate */
+  --panel: #161d27;
+  --panel-2: #1c2531;
+  --line: #2a3442;
+  --fg: #e6e9ee;
+  --muted: #8d98a8;
+  --amber: #f2a93b;       /* timing-board amber: the one accent */
+  --cyan: #6cc4d8;        /* centerline / geometry */
+  --ok: #6fcf8e;
+  --warn: #f2a93b;
+  --bad: #ef6b5e;
+  --display: "Saira Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; }
+.app {
+  height: 100%; display: grid; gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "view side" "bar side";
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px; box-sizing: border-box;
+}
+header { grid-area: head; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: .02em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--amber); }
+.sub { color: var(--muted); font-size: 13px; max-width: 70ch; }
+.view { grid-area: view; position: relative; min-height: 320px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #0b1016; }
+.view canvas { display: block; }
+#labels { position: absolute !important; inset: 0; pointer-events: none; }
+.lbl { font: 500 11px/1.2 var(--mono); color: var(--fg); background: rgba(15,20,27,.78); border: 1px solid var(--line);
+       padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.lbl.corner { color: var(--cyan); border-color: rgba(108,196,216,.35); }
+.lbl.tick { color: var(--muted); background: transparent; border: 0; }
+.lbl.cam { color: var(--muted); font-size: 10px; }
+.lbl.cam.off { color: var(--bad); border-color: rgba(239,107,94,.6); }
+.lbl.marble { font-weight: 500; }
+.lbl.sel { border-color: var(--amber); color: var(--amber); }
+.lbl.hide { visibility: hidden !important; }
+.legend { position: absolute; left: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: calc(100% - 20px);
+          font: 11px var(--mono); color: var(--muted); background: rgba(15,20,27,.8); padding: 6px 9px; border-radius: 4px; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.hint { position: absolute; right: 10px; top: 10px; font: 11px var(--mono); color: var(--muted); background: rgba(15,20,27,.8); padding: 4px 8px; border-radius: 4px; }
+.bar { grid-area: bar; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; background: var(--panel); border: 1px solid var(--line);
+       border-radius: 6px; padding: 8px 12px; }
+.bar label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.bar select, .bar button { font: 500 13px var(--body); color: var(--fg); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 9px; }
+.bar button { cursor: pointer; min-width: 74px; }
+.bar button:hover, .bar select:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+#scrub { flex: 1 1 220px; min-width: 160px; accent-color: var(--amber); }
+.clock { font: 500 15px var(--mono); color: var(--amber); font-variant-numeric: tabular-nums; min-width: 72px; }
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.toggles input { accent-color: var(--amber); }
+.side { grid-area: side; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; min-width: 0; }
+.card h2 { font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; }
+.card h2 b { color: var(--fg); letter-spacing: .02em; text-transform: none; font-weight: 600; }
+.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tower td { padding: 3px 4px; border-top: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
+.tower tr:first-child td { border-top: 0; }
+.tower tr { cursor: pointer; }
+.tower tr:hover td { background: var(--panel-2); }
+.tower tr.sel td { background: rgba(242,169,59,.12); }
+.tower .pos { font: 700 15px var(--display); width: 22px; text-align: right; color: var(--fg); }
+.tower .dot { width: 12px; }
+.tower .dot i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: middle; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.tower .gap, .tower .truth { font: 12px var(--mono); color: var(--muted); text-align: right; }
+.chip { font: 500 10px var(--mono); padding: 1px 5px; border-radius: 3px; letter-spacing: .04em; text-transform: uppercase; border: 1px solid currentColor; }
+.chip.tracking { color: var(--ok); } .chip.coasting { color: var(--warn); } .chip.lost { color: var(--bad); }
+.chip.finished { color: var(--amber); } .chip.photo { color: var(--bad); } .chip.unseen { color: var(--muted); }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+.steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; counter-increment: st; }
+.steps li::before { content: counter(st); font: 700 13px var(--display); color: var(--bg); background: var(--cyan); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+.steps b { display: block; font: 600 12px var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); }
+.steps p { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--fg); }
+.steps code, .mono { font: 12px var(--mono); color: var(--amber); }
+.formula { font: 12px var(--mono); color: var(--muted); }
+.log { font: 12px var(--mono); color: var(--muted); display: grid; gap: 3px; max-height: 150px; overflow: auto; }
+.log .ev-off { color: var(--bad); } .log .ev-on { color: var(--ok); } .log .ev-fin { color: var(--amber); }
+.scen { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; margin-top: 8px; }
+.kpis div { background: var(--panel-2); border-radius: 4px; padding: 5px 7px; }
+.kpis span { display: block; font: 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.kpis strong { font: 600 15px var(--display); font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); font-size: 13px; }
+@media (max-width: 960px) {
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "head" "view" "bar" "side"; }
+  .view { height: 58vh; }
+  .side { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <header>
+    <h1>Marble Race <span>Control</span> · 3D</h1>
+    <div class="sub">Replays recorded from the real tracking pipeline: rendered camera frames → colour detection → track-progress fusion → leaderboard. Spheres are the true marbles; boxes are what the tracker computed. Click a marble or a row in the timing tower.</div>
+  </header>
+
+  <div class="view" id="view">
+    <div id="labels"></div>
+    <div class="hint">drag to orbit · scroll to zoom · right-drag to pan</div>
+    <div class="legend">
+      <span><i style="background:var(--cyan)"></i>centerline + waypoints</span>
+      <span><i style="background:var(--amber)"></i>corner / selected</span>
+      <span><i style="background:var(--ok)"></i>camera online</span>
+      <span><i style="background:var(--bad)"></i>camera offline</span>
+      <span><i style="background:#fff;opacity:.6"></i>□ tracker box · ○ true marble</span>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button id="play" type="button">Pause</button>
+    <span class="clock" id="clock">0.00 s</span>
+    <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Race time">
+    <label>Speed <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label>
+    <label>Replay <select id="scenario"></select></label>
+    <label>View <select id="camview"><option value="overview">Overview</option><option value="follow">Follow selected</option><option value="master">Master camera</option></select></label>
+    <div class="toggles">
+      <label><input type="checkbox" id="tWaypoints" checked> Waypoints</label>
+      <label><input type="checkbox" id="tCams" checked> Cameras</label>
+      <label><input type="checkbox" id="tTruth" checked> True marbles</label>
+      <label><input type="checkbox" id="tLabels" checked> Labels</label>
+      <label><input type="checkbox" id="tXray"> X-ray tunnels</label>
+      <label>Marble size <select id="mscale"><option value="1">1× real</option><option value="2">2×</option><option value="3" selected>3×</option><option value="5">5×</option></select></label>
+    </div>
+  </div>
+
+  <aside class="side">
+    <section class="card">
+      <h2>Replay <b id="scenName"></b></h2>
+      <div class="scen" id="scenDesc"></div>
+      <div class="kpis" id="kpis"></div>
+    </section>
+    <section class="card">
+      <h2>Timing tower <b id="towerNote"></b></h2>
+      <table class="tower" id="tower"></table>
+    </section>
+    <section class="card">
+      <h2>How it is computed <b id="selName">—</b></h2>
+      <ol class="steps" id="steps"><li><span><b>Select a marble</b><p class="empty">Click a marble in the scene or a row in the timing tower to follow its numbers live.</p></span></li></ol>
+    </section>
+    <section class="card">
+      <h2>Race control</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </aside>
+</div>
+
+<script id="replays" type="application/json">/*REPLAYS*/</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+<script>
+"use strict";
+const REPLAYS = JSON.parse(document.getElementById("replays").textContent);
+const NAMES = {
+  single_nominal: "1 master camera · nominal race",
+  multi_camera_failure: "14 cameras · two cameras fail",
+  multi_corner_duel: "Corner duel · micro-overtake",
+  multi_photo_finish: "Photo-finish ladder",
+  multi_backward_slip: "Backward slips & bounces",
+  multi_worst_case: "Worst case · everything at once",
+};
+const $ = (id) => document.getElementById(id);
+const TRACK_H = 0.012, WALL_H = 0.018;
+
+// ---------- geometry helpers (world: x right, y up the table; three: x, up=y, z = -world y) ----------
+const W = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+
+class Centerline {
+  constructor(pts) {
+    this.p = pts.map(([x, y]) => [x, y]);
+    this.s = [0];
+    for (let i = 1; i < this.p.length; i++) this.s.push(this.s[i - 1] + Math.hypot(this.p[i][0] - this.p[i - 1][0], this.p[i][1] - this.p[i - 1][1]));
+    this.L = this.s[this.s.length - 1];
+  }
+  seg(s) { let lo = 0, hi = this.s.length - 2; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (this.s[m] <= s) lo = m; else hi = m - 1; } return lo; }
+  at(s) {  // position + unit tangent at progress s
+    s = Math.max(0, Math.min(this.L, s));
+    const i = this.seg(s), a = this.p[i], b = this.p[i + 1], ds = this.s[i + 1] - this.s[i] || 1e-9, t = (s - this.s[i]) / ds;
+    const tx = (b[0] - a[0]) / ds, ty = (b[1] - a[1]) / ds;
+    return { x: a[0] + t * (b[0] - a[0]), y: a[1] + t * (b[1] - a[1]), tx, ty, nx: -ty, ny: tx, i, t };
+  }
+  project(x, y) {  // the tracker's step: nearest centerline segment -> progress s, signed lateral offset
+    let best = null;
+    for (let i = 0; i < this.p.length - 1; i++) {
+      const a = this.p[i], b = this.p[i + 1], abx = b[0] - a[0], aby = b[1] - a[1], l2 = abx * abx + aby * aby || 1e-12;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * abx + (y - a[1]) * aby) / l2));
+      const cx = a[0] + t * abx, cy = a[1] + t * aby, d = Math.hypot(x - cx, y - cy);
+      if (!best || d < best.d) {
+        const l = Math.sqrt(l2), side = (abx * (y - a[1]) - aby * (x - a[0])) >= 0 ? 1 : -1;
+        best = { i, t, d, lat: side * d, cx, cy, s: this.s[i] + t * (this.s[i + 1] - this.s[i]), heading: Math.atan2(aby, abx) };
+      }
+    }
+    return best;
+  }
+  corners() {  // curved sections, like marbletrack.edgecases.corners()
+    const ang = [];
+    for (let i = 0; i < this.p.length - 1; i++) ang.push(Math.atan2(this.p[i + 1][1] - this.p[i][1], this.p[i + 1][0] - this.p[i][0]));
+    for (let i = 1; i < ang.length; i++) { while (ang[i] - ang[i - 1] > Math.PI) ang[i] -= 2 * Math.PI; while (ang[i] - ang[i - 1] < -Math.PI) ang[i] += 2 * Math.PI; }
+    const out = []; let i = 0;
+    while (i < ang.length - 1) {
+      if (Math.abs(ang[i + 1] - ang[i]) < 1e-3) { i++; continue; }
+      let j = i; while (j < ang.length - 1 && Math.abs(ang[j + 1] - ang[j]) >= 1e-3) j++;
+      const turn = ang[j] - ang[i];
+      // Radius = median of local radii (segment length / heading change), robust to the
+      // partly straight segments where the corner begins and ends.
+      const radii = [];
+      for (let k = i; k < j; k++) radii.push((this.s[k + 2] - this.s[k + 1]) / Math.abs(ang[k + 1] - ang[k]));
+      radii.sort((a, b) => a - b);
+      if (Math.abs(turn) > Math.PI / 2) out.push({ s0: this.s[i + 1], s1: this.s[j], dir: turn > 0 ? "left" : "right", R: radii[radii.length >> 1] });
+      i = j;
+    }
+    return out;
+  }
+}
+
+// ---------- three.js scene ----------
+const view = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.outputEncoding = THREE.sRGBEncoding;
+view.prepend(renderer.domElement);
+const labelRenderer = new THREE.CSS2DRenderer();
+labelRenderer.domElement.id = "labels";
+$("labels").replaceWith(labelRenderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1016);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 50);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xdfe8f5, 0x20262e, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(-1.5, 4, 2); scene.add(sun);
+
+let world = null;  // everything built for the current replay
+function showLabel(l, v) { l.visible = v; l.element.classList.toggle("hide", !v); }
+function label(text, cls) { const d = document.createElement("div"); d.className = "lbl " + cls; d.textContent = text; return new THREE.CSS2DObject(d); }
+function ribbon(cl, s0, s1, off0, off1, h0, h1, step = 0.01) {  // strip between two offsets/heights along the centerline
+  const pos = [], idx = [];
+  const n = Math.max(2, Math.ceil((s1 - s0) / step) + 1);
+  for (let k = 0; k < n; k++) {
+    const q = cl.at(s0 + (s1 - s0) * k / (n - 1));
+    pos.push(q.x + q.nx * off0, h0, -(q.y + q.ny * off0), q.x + q.nx * off1, h1, -(q.y + q.ny * off1));
+    if (k) { const b = 2 * (k - 1); idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+
+function build(key) {
+  if (world) { scene.remove(world.root); world.labels.forEach((l) => l.element.remove()); }
+  const R = REPLAYS[key];
+  const cl = new Centerline(R.track);
+  const root = new THREE.Group(); scene.add(root);
+  const labels = [];
+  const addLabel = (obj, parent, cls) => { parent.add(obj); labels.push(obj); obj.userData.cls = cls; return obj; };
+  const [TW, TH] = R.table, w = R.track_width;
+
+  // table
+  const table = new THREE.Mesh(new THREE.BoxGeometry(TW + 0.2, 0.04, TH + 0.2), new THREE.MeshStandardMaterial({ color: 0x24382b, roughness: 0.95 }));
+  table.position.set(TW / 2, -0.02, -TH / 2); root.add(table);
+  // track surface + walls
+  const trackMat = new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.7, side: THREE.DoubleSide });
+  root.add(new THREE.Mesh(ribbon(cl, 0, cl.L, -w / 2, w / 2, TRACK_H, TRACK_H), trackMat));
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.5, side: THREE.DoubleSide });
+  for (const o of [-w / 2, w / 2]) root.add(new THREE.Mesh(ribbon(cl, 0, cl.L, o, o, TRACK_H, TRACK_H + WALL_H), wallMat));
+  // corners: amber tint on the surface + label with direction and radius
+  const corners = cl.corners();
+  corners.forEach((c, k) => {
+    const m = new THREE.Mesh(ribbon(cl, c.s0, c.s1, -w / 2, w / 2, TRACK_H + 0.0005, TRACK_H + 0.0005), new THREE.MeshBasicMaterial({ color: 0xf2a93b, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
+    root.add(m);
+    const q = cl.at((c.s0 + c.s1) / 2), out = c.dir === "left" ? -1 : 1;
+    const l = label(`T${k + 1} · ${c.dir}-hander · R ${c.R.toFixed(2)} m`, "corner");
+    l.position.copy(W(q.x + q.nx * out * 0.09, q.y + q.ny * out * 0.09, 0.05)); addLabel(l, root, "corner");
+  });
+  // centerline + waypoints + s ticks
+  const clGeo = new THREE.BufferGeometry().setFromPoints(cl.p.map(([x, y]) => W(x, y, TRACK_H + 0.001)));
+  const centerLine = new THREE.Line(clGeo, new THREE.LineBasicMaterial({ color: 0x6cc4d8 })); root.add(centerLine);
+  const wp = new THREE.InstancedMesh(new THREE.SphereGeometry(0.0035, 8, 6), new THREE.MeshBasicMaterial({ color: 0x6cc4d8 }), cl.p.length);
+  const mtx = new THREE.Matrix4();
+  cl.p.forEach(([x, y], i) => { mtx.setPosition(W(x, y, TRACK_H + 0.002)); wp.setMatrixAt(i, mtx); });
+  root.add(wp);
+  const ticks = new THREE.Group(); root.add(ticks);
+  for (let s = 1; s < cl.L; s += 1) {
+    const q = cl.at(s); const l = label(`${s} m`, "tick"); l.position.copy(W(q.x - q.nx * 0.055, q.y - q.ny * 0.055, 0.02)); addLabel(l, ticks, "tick");
+  }
+  // finish line: two rows of checkers laid along the track direction
+  const fq = cl.at(R.s_finish), cells = 8, cw = w / cells;
+  const black = new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide }), white = new THREE.MeshBasicMaterial({ color: 0xf4f4f4, side: THREE.DoubleSide });
+  for (let row = 0; row < 2; row++) for (let c = 0; c < cells; c++) {
+    const a = R.s_finish + (row - 1) * 0.006, o = -w / 2 + c * cw;
+    root.add(new THREE.Mesh(ribbon(cl, a, a + 0.006, o, o + cw, TRACK_H + 0.0015, TRACK_H + 0.0015, 0.006), (row + c) % 2 ? black : white));
+  }
+  const fl = label("FINISH", "corner"); fl.position.copy(W(fq.x, fq.y, 0.06)); addLabel(fl, root, "corner");
+  // tunnels
+  const tunnelMat = new THREE.MeshStandardMaterial({ color: 0x6e4a2c, roughness: 0.8, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  for (const [a, b] of R.tunnels) {
+    const tw = w * 0.9;
+    root.add(new THREE.Mesh(ribbon(cl, a, b, -tw, tw, 0.05, 0.05), tunnelMat));
+    for (const o of [-tw, tw]) root.add(new THREE.Mesh(ribbon(cl, a, b, o, o, 0, 0.05), tunnelMat));
+  }
+  // cameras: frustum from an apex above the footprint to its four corners
+  const camGroup = new THREE.Group(); root.add(camGroup);
+  const cams = R.cam_ids.map((id, k) => {
+    const fp = R.cam_footprints[k];
+    const cxm = fp.reduce((a, p) => a + p[0], 0) / 4, cym = fp.reduce((a, p) => a + p[1], 0) / 4;
+    const h = id === "master" ? 2.6 : id === "finish" ? 0.45 : 0.9;
+    const apex = W(cxm, cym, h), pts = [];
+    fp.forEach((p, i) => { const q = fp[(i + 1) % 4]; pts.push(apex, W(p[0], p[1], 0.002), W(p[0], p[1], 0.002), W(q[0], q[1], 0.002)); });
+    const mat = new THREE.LineBasicMaterial({ color: 0x6fcf8e, transparent: true, opacity: id === "master" ? 0.35 : 0.45 });
+    const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat); camGroup.add(lines);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.045), new THREE.MeshStandardMaterial({ color: 0x2b3440 }));
+    body.position.copy(apex); camGroup.add(body);
+    const l = label(id, "cam"); l.position.copy(apex).add(new THREE.Vector3(0, 0.03, 0)); addLabel(l, camGroup, "cam");
+    return { id, mat, l };
+  });
+  // marbles: true sphere + tracker bounding box (oriented to the track direction) + label
+  const marbles = R.ids.map((id, j) => {
+    const color = new THREE.Color(R.colors[j]);
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(R.marble_radius, 24, 16), new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.05 }));
+    const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * R.marble_radius, 2 * R.marble_radius, 2 * R.marble_radius)),
+      new THREE.LineBasicMaterial({ color, transparent: true }));
+    sphere.userData.j = j; box.userData.j = j;
+    root.add(sphere, box);
+    const l = label(id, "marble"); addLabel(l, root, "marble");
+    l.element.style.borderColor = R.colors[j];
+    return { id, sphere, box, l };
+  });
+  // selection helpers: projection foot, perpendicular, tangent arrow, highlighted waypoints
+  const selGroup = new THREE.Group(); root.add(selGroup);
+  const perp = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0xf2a93b }));
+  const foot = new THREE.Mesh(new THREE.SphereGeometry(0.005, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf2a93b }));
+  const wpA = new THREE.Mesh(new THREE.SphereGeometry(0.007, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf2a93b }));
+  const wpB = wpA.clone();
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.12, 0xf2a93b, 0.03, 0.018);
+  selGroup.add(perp, foot, wpA, wpB, arrow); selGroup.visible = false;
+
+  world = { key, R, cl, root, labels, cams, marbles, centerLine, wp, ticks, camGroup, selGroup, perp, foot, wpA, wpB, arrow, tunnelMat, corners };
+  const n = R.t.length;
+  $("scrub").max = n - 1;
+  $("scenName").textContent = NAMES[key] || key;
+  $("scenDesc").textContent = R.description;
+  const S = R.summary;
+  $("kpis").innerHTML = [
+    ["Visible rank", (100 * S.rank_accuracy).toFixed(1) + "%"],
+    ["Final order", S.final_order_correct ? "correct" : "wrong"],
+    ["ID errors", S.id_errors],
+    ["Max finish err", S.finish_err_ms_max.toFixed(2) + " ms"],
+    ["Position RMS", S.pos_err_cm_rms.toFixed(2) + " cm"],
+    ["Photo flags", S.photo_finishes],
+  ].map(([k, v]) => `<div><span>${k}</span><strong>${v}</strong></div>`).join("");
+  applyToggles();
+  setView($("camview").value, true);
+}
+
+// ---------- state ----------
+let frame = 0, playing = true, selected = null, lastTs = null;
+function lerp(a, b, f) { return a + (b - a) * f; }
+function sample(R, k) {  // interpolated replay state at fractional frame k
+  const i = Math.min(R.t.length - 1, Math.floor(k)), j = Math.min(R.t.length - 1, i + 1), f = k - i;
+  return {
+    i, t: lerp(R.t[i], R.t[j], f),
+    truth: R.truth[i].map((v, m) => lerp(v, R.truth[j][m], f)),
+    est: R.est[i].map((v, m) => (R.status[j][m] === "unseen" ? v : lerp(v, R.est[j][m], f))),
+    lat: R.lat[i].map((v, m) => lerp(v, R.lat[j][m], f)),
+  };
+}
+const fmt = (v, d = 3) => (v == null || !isFinite(v) ? "—" : v.toFixed(d));
+
+function update() {
+  const { R, cl, marbles, cams } = world;
+  const S = sample(R, frame), k = S.i;
+  const scale = +$("mscale").value;
+  const status = R.status[k], order = R.order[k];
+  // marbles
+  marbles.forEach((m, j) => {
+    const tq = cl.at(S.truth[j]), eq = cl.at(S.est[j]);
+    const vis = S.truth[j] > 0.02 && S.truth[j] < cl.L - 0.03;
+    const lat = S.lat[j];
+    m.sphere.position.copy(W(tq.x + tq.nx * lat, tq.y + tq.ny * lat, TRACK_H + R.marble_radius * scale));
+    m.sphere.scale.setScalar(scale);
+    m.sphere.visible = vis && $("tTruth").checked;
+    const st = status[j];
+    m.box.visible = st !== "unseen" && vis;
+    m.box.position.copy(W(eq.x + eq.nx * lat, eq.y + eq.ny * lat, TRACK_H + R.marble_radius * scale));
+    m.box.rotation.set(0, Math.atan2(eq.ty, eq.tx), 0);
+    m.box.scale.setScalar(scale * 1.15);
+    m.box.material.opacity = st === "tracking" || st === "finished" ? 1 : 0.35;
+    const rank = order.indexOf(j) + 1;
+    m.l.element.textContent = `P${rank} ${m.id}${st === "coasting" ? " · hidden" : st === "finished" ? " · fin" : ""}`;
+    m.l.element.classList.toggle("sel", selected === j);
+    m.l.position.copy(m.box.position).add(new THREE.Vector3(0, 0.03 * scale / 2 + 0.02, 0));
+    showLabel(m.l, m.box.visible && $("tLabels").checked);
+  });
+  // cameras
+  const online = R.cams[k];
+  cams.forEach((c, i) => {
+    const on = online[i] !== 0;
+    c.mat.color.set(on ? 0x6fcf8e : 0xef6b5e); c.mat.opacity = on ? (c.id === "master" ? 0.3 : 0.4) : 0.9;
+    c.l.element.classList.toggle("off", !on); c.l.element.textContent = on ? c.id : c.id + " OFFLINE";
+  });
+  $("clock").textContent = S.t.toFixed(2) + " s";
+  $("scrub").value = Math.floor(frame);
+  renderTower(S, k); renderSteps(S, k); renderLog(S.t);
+}
+
+function renderTower(S, k) {
+  const R = world.R, order = R.order[k], status = R.status[k];
+  const truthRank = R.ids.map((_, j) => j).sort((a, b) => {
+    const fa = R.truth_finish[a] != null && R.truth_finish[a] <= S.t, fb = R.truth_finish[b] != null && R.truth_finish[b] <= S.t;
+    if (fa && fb) return R.truth_finish[a] - R.truth_finish[b];
+    if (fa !== fb) return fa ? -1 : 1;
+    return S.truth[b] - S.truth[a];
+  });
+  const lead = Math.max(...order.filter((j) => status[j] !== "finished").map((j) => R.est[k][j]));
+  const photo = new Set(R.photo.map((p, j) => (p ? j : -1)));
+  $("tower").innerHTML = order.map((j, r) => {
+    const st = status[j], fin = st === "finished";
+    const gap = fin ? fmt(R.est_finish[j], 4) + " s" : st === "unseen" ? "" : "+" + fmt(lead - R.est[k][j], 3) + " m";
+    const chip = fin && photo.has(j) ? '<span class="chip photo">photo</span>' : `<span class="chip ${st}">${st === "coasting" ? "hidden" : st}</span>`;
+    return `<tr data-j="${j}" class="${selected === j ? "sel" : ""}"><td class="pos">${r + 1}</td><td class="dot"><i style="background:${R.colors[j]}"></i></td>` +
+      `<td>${R.ids[j]}</td><td class="gap">${gap}</td><td>${chip}</td><td class="truth" title="True position">T${truthRank.indexOf(j) + 1}</td></tr>`;
+  }).join("");
+  $("towerNote").textContent = "T = true position";
+}
+
+function renderSteps(S, k) {
+  const { R, cl, corners, selGroup } = world;
+  if (selected == null) { selGroup.visible = false; return; }
+  const j = selected, st = R.status[k][j];
+  $("selName").textContent = R.ids[j];
+  if (st === "unseen") { $("steps").innerHTML = `<li><span><b>Not yet seen</b><p>No camera has reported ${R.ids[j]} yet.</p></span></li>`; selGroup.visible = false; return; }
+  // the physical marble as a camera sees it, and the tracker's construction on the centerline
+  const tq = cl.at(S.truth[j]), lat = S.lat[j];
+  const px = tq.x + tq.nx * lat, py = tq.y + tq.ny * lat;
+  const P = cl.project(px, py);
+  const corner = corners.findIndex((c) => P.s >= c.s0 && P.s <= c.s1);
+  const c = corners[corner];
+  const inside = c ? ((c.dir === "left") === (P.lat > 0)) : null;
+  const scale = +$("mscale").value;
+  selGroup.visible = true;
+  const h = TRACK_H + 0.004;
+  world.perp.geometry.setFromPoints([W(px, py, h), W(P.cx, P.cy, h)]);
+  world.foot.position.copy(W(P.cx, P.cy, h));
+  world.wpA.position.copy(W(cl.p[P.i][0], cl.p[P.i][1], h)); world.wpB.position.copy(W(cl.p[P.i + 1][0], cl.p[P.i + 1][1], h));
+  world.arrow.position.copy(W(P.cx, P.cy, h + 0.01 * scale));
+  world.arrow.setDirection(new THREE.Vector3(Math.cos(P.heading), 0, -Math.sin(P.heading)));
+  const [own, rival] = R.color[k][j];
+  const cam = R.obs_cam[k][j] >= 0 ? R.cam_ids[R.obs_cam[k][j]] : "—";
+  const est = R.est[k][j], v = R.v[k][j], obs = R.obs_s[k][j];
+  const order = R.order[k], rank = order.indexOf(j) + 1;
+  const racing = order.filter((m) => R.status[k][m] !== "finished");
+  const leaderS = Math.max(...racing.map((m) => R.est[k][m]));
+  const ahead = rank > 1 ? order[rank - 2] : null;
+  const heading = ((90 - P.heading * 180 / Math.PI) % 360 + 360) % 360;
+  const items = [
+    ["Colour identity", `Pixels matched ${R.ids[j]}'s colour model in <span class="mono">${cam}</span>: d² = <span class="mono">${fmt(own, 1)}</span>; best other marble d² = <span class="mono">${fmt(rival, 1)}</span>. Assigned only if within 20 of the best match (ratio test) and inside the motion gate.`],
+    ["Nearest waypoints", `Blob centre (${fmt(px, 3)}, ${fmt(py, 3)}) m projects onto segment <span class="mono">W${P.i} → W${P.i + 1}</span> at t = <span class="mono">${fmt(P.t, 2)}</span>.<br><span class="formula">s = s(W${P.i}) + t · Δs = ${fmt(cl.s[P.i], 3)} + ${fmt(P.t, 2)} × ${fmt(cl.s[P.i + 1] - cl.s[P.i], 3)} = ${fmt(P.s, 3)} m</span>`],
+    ["Curve direction", c
+      ? `In <b style="display:inline;color:var(--amber)">T${corner + 1}</b>, a ${c.dir}-hander of radius ${c.R.toFixed(2)} m. Heading ${heading.toFixed(0)}°. Lateral offset ${(P.lat * 1000).toFixed(0)} mm, ${inside ? "inside" : "outside"} line. Progress is measured at the foot of the perpendicular, so inside and outside lines are compared at the same point of the corner.`
+      : `Straight. Heading ${heading.toFixed(0)}°. Lateral offset ${(P.lat * 1000).toFixed(0)} mm ${P.lat >= 0 ? "left" : "right"} of the centerline. It does not change progress.`],
+    ["Kalman filter", `Latest raw measurement s = <span class="mono">${fmt(obs, 3)}</span> m. Filtered state s = <span class="mono">${fmt(est, 3)}</span> m, v = <span class="mono">${fmt(v, 2)}</span> m/s. Status <span class="chip ${st}">${st === "coasting" ? "hidden" : st}</span>${st === "coasting" ? ". It coasts on prediction, capped at the blind-zone exit." : ""}`],
+    st === "finished"
+      ? ["Finish time", `Crossed at <span class="mono">${fmt(R.est_finish[j], 4)} s</span> ± <span class="mono">${fmt(R.finish_sigma[j] * 1000, 2)} ms</span> (1σ). This comes from a weighted least-squares fit to every observation within ±30 ms of the line. True time: ${fmt(R.truth_finish[j], 4)} s.${R.photo[j] ? " Flagged as a photo finish: the gap to a neighbour is below 3σ, so the frames go to review." : ""}`]
+      : ["Progress → rank", `${fmt(est, 2)} / ${fmt(R.s_finish, 2)} m = <span class="mono">${(100 * est / R.s_finish).toFixed(1)} %</span>. Rank P${rank}. ${rank > 1 ? `Gap to leader ${fmt(leaderS - est, 3)} m ≈ ${fmt((leaderS - est) / Math.max(v, 0.1), 2)} s.` : "Leading."} ${ahead != null ? `To pass ${R.ids[ahead]} it needs a lead greater than ${(R.rank_margin * 1000).toFixed(1)} mm + 2σ while visible; a lead near that threshold must hold for 100 ms.` : ""}`],
+  ];
+  $("steps").innerHTML = items.map(([t, p]) => `<li><span><b>${t}</b><p>${p}</p></span></li>`).join("");
+}
+
+function renderLog(t) {
+  const ev = (world.R.events || []).filter((e) => e[0] <= t);
+  $("log").innerHTML = ev.length ? ev.slice(-40).reverse().map(([tt, kind, who]) => {
+    const cls = kind === "camera_offline" ? "ev-off" : kind === "camera_online" ? "ev-on" : "ev-fin";
+    const txt = { finish: "crossed the line", finish_confirmed: "finish time confirmed", camera_offline: "went offline", camera_online: "back online" }[kind] || kind;
+    return `<div class="${cls}">${tt.toFixed(3)} s · ${who} ${txt}</div>`;
+  }).join("") : '<div>No events yet.</div>';
+}
+
+// ---------- interaction ----------
+function applyToggles() {
+  if (!world) return;
+  world.wp.visible = world.centerLine.visible = $("tWaypoints").checked;
+  world.camGroup.visible = $("tCams").checked;
+  world.tunnelMat.opacity = $("tXray").checked ? 0.18 : 0.95;
+  const showL = $("tLabels").checked;
+  world.labels.forEach((l) => {
+    const cls = l.userData.cls;
+    if (cls === "marble") return;
+    showLabel(l, showL && (cls !== "tick" || $("tWaypoints").checked) && (cls !== "cam" || $("tCams").checked));
+  });
+}
+["tWaypoints", "tCams", "tTruth", "tLabels", "tXray"].forEach((id) => $(id).addEventListener("change", () => { applyToggles(); update(); }));
+$("mscale").addEventListener("change", update);
+$("play").addEventListener("click", () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; });
+$("scrub").addEventListener("input", (e) => { frame = +e.target.value; update(); });
+$("scenario").addEventListener("change", (e) => { frame = 0; selected = null; build(e.target.value); update(); });
+$("camview").addEventListener("change", (e) => {
+  // Close-up views show marbles at true size so side-by-side marbles stay distinct.
+  $("mscale").value = e.target.value === "follow" ? "1" : "3";
+  setView(e.target.value, true); update();
+});
+$("tower").addEventListener("click", (e) => { const tr = e.target.closest("tr"); if (tr) { selected = +tr.dataset.j; if ($("camview").value === "overview") { $("camview").value = "follow"; $("mscale").value = "1"; setView("follow", true); } update(); } });
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", (e) => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  ray.params.Line = { threshold: 0.02 };
+  const hits = ray.intersectObjects(world.marbles.flatMap((m) => [m.sphere, m.box]));
+  if (hits.length) { selected = hits[0].object.userData.j; update(); }
+});
+
+function setView(mode, jump) {
+  if (!world) return;
+  const [TW, TH] = world.R.table;
+  if (mode === "overview") { camera.position.set(TW / 2 - 0.2, 2.3, 1.55); controls.target.set(TW / 2, 0, -TH / 2); }
+  if (mode === "master") { camera.position.set(TW / 2, 3.4, -TH / 2 + 0.001); controls.target.set(TW / 2, 0, -TH / 2); }
+  controls.update();
+}
+function follow() {
+  if ($("camview").value !== "follow" || selected == null) return;
+  const m = world.marbles[selected].box.position;
+  const q = world.cl.at(sample(world.R, frame).est[selected]);
+  const back = new THREE.Vector3(-q.tx, 0, q.ty).multiplyScalar(0.35);
+  const want = m.clone().add(back).add(new THREE.Vector3(0, 0.22, 0));
+  camera.position.lerp(want, 0.08); controls.target.lerp(m, 0.2);
+}
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h); labelRenderer.setSize(w, h);
+  camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (lastTs != null && playing) {
+    const R = world.R, fps = R.fps || 30;
+    frame += ((ts - lastTs) / 1000) * fps * +$("speed").value;
+    if (frame >= R.t.length - 1) frame = 0;
+    update();
+  }
+  lastTs = ts;
+  follow();
+  controls.update();
+  renderer.render(scene, camera); labelRenderer.render(scene, camera);
+}
+
+// ---------- boot ----------
+Object.keys(REPLAYS).forEach((k) => { const o = document.createElement("option"); o.value = k; o.textContent = NAMES[k] || k; $("scenario").append(o); });
+const first = location.hash && REPLAYS[location.hash.slice(1)] ? location.hash.slice(1) : Object.keys(REPLAYS)[0];
+$("scenario").value = first;
+build(first);
+frame = Math.min(world.R.t.length - 1, Math.round(4 * (world.R.fps || 30)));
+selected = world.R.order[Math.floor(frame)][0];
+resize(); update();
+requestAnimationFrame(loop);
+</script>

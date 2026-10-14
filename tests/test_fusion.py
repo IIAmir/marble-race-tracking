@@ -100,3 +100,68 @@ def test_reorder_buffer_releases_in_capture_order():
     assert [c for _, c, _ in buf.pop_ready(0.08)] == ["a", "b"]
     buf.push(0.0, "late", [])
     assert buf.late == 1
+
+
+def _noisy(s, k, best, t, rng, sigma_m=0.001, s_per_px=0.001):
+    return det(s + rng.normal(0, sigma_m), best, k=k, t=t)
+
+
+def test_finish_least_squares_is_accurate_and_sigma_honest():
+    rng = np.random.default_rng(3)
+    z = []
+    for trial in range(40):
+        eng = FusionEngine(["a"], s_finish=1.0, track_length=2)
+        v, t_cross = rng.uniform(1.2, 1.8), rng.uniform(0.6, 0.7)
+        for n in range(int(0.9 * 240)):
+            t = n / 240
+            eng.process(t, [_noisy(1.0 + v * (t - t_cross), 1, 0, t, rng)], "finish")
+        m = eng.marbles[0]
+        assert m.finish_final
+        assert abs(m.finish_time - t_cross) < 1e-3
+        z.append((m.finish_time - t_cross) / m.finish_sigma)
+    z = np.array(z)
+    assert np.mean(np.abs(z) > 3) < 0.05  # stated sigma is not optimistic
+    assert 0.5 < np.std(z) < 1.6
+
+
+def test_dead_heat_dither_never_flickers():
+    rng = np.random.default_rng(1)
+    eng = FusionEngine(["a", "b"], s_finish=100, track_length=200)
+    flips, prev = 0, None
+    for n in range(300):
+        t = n / 30
+        sa = 1.0 + 1.2 * t
+        sb = sa + 0.008 * np.sin(2 * np.pi * t / 0.2)
+        eng.process(t, [_noisy(sa, 2, 0, t, rng, 0.002), _noisy(sb, 2, 1, t, rng, 0.002)], "c")
+        order = [e.marble_id for e in eng.leaderboard()]
+        if prev is not None and order != prev and n > 3:
+            flips += 1
+        prev = order
+    assert flips == 0
+
+
+def test_multi_position_overtake_confirmed_at_once():
+    eng = FusionEngine(["a", "b", "c", "d"], s_finish=100, track_length=200)
+    for n in range(40):
+        t = n / 30
+        # 'd' starts last and is 0.9 m/s faster than a tight group of three.
+        group = [det(1.00 + 1.0 * t, 0, k=4, t=t), det(0.98 + 1.0 * t, 1, k=4, t=t), det(0.96 + 1.0 * t, 2, k=4, t=t)]
+        eng.process(t, group + [det(0.90 + 1.9 * t, 3, k=4, t=t)], "c")
+        board = [e.marble_id for e in eng.leaderboard()]
+        true_d_ahead = 0.90 + 1.9 * t > 1.00 + 1.0 * t + 0.04
+        if true_d_ahead:
+            assert board[0] == "d", (t, board)
+
+
+def test_bounce_is_followed_within_two_frames():
+    eng = FusionEngine(["a"], s_finish=100, track_length=200)
+    s, errs = 1.0, []
+    for n in range(60):
+        t = n / 30
+        v = 1.4 if t < 1.0 else (-0.8 if t < 1.15 else 1.4)
+        s += v / 30
+        eng.process(t, [det(s, 0, k=1, t=t)], "c")
+        if t >= 1.0 + 2 / 30:
+            errs.append(abs(eng.marbles[0].x[0] - s))
+    assert max(errs) < 0.03
+    assert eng.status(eng.marbles[0], eng.now) == "tracking"

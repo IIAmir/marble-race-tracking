@@ -16,7 +16,7 @@ are in [`results/`](../results).
 | R1 | Identify every marble by colour, no ID swaps | 0 identity errors per race | Simulation suite (`id_errors`), on-site annotated races |
 | R2 | Live leaderboard correct for all visible marbles | ≥ 99.5 % of published instants | `rank_accuracy` metric |
 | R3 | Official finishing order correct | 100 %; physically unresolvable gaps flagged for review, never guessed | `final_order_correct` + `photo_finish` flag |
-| R4 | Finish-time accuracy | ≤ 5 ms (30 fps cameras), ≤ 1 ms with finish camera | `finish_err_ms_*` |
+| R4 | Finish-time accuracy | ≤ 5 ms (30 fps cameras), ≤ 1 ms with finish camera; stated σ honest | `finish_err_ms_*`, z-score calibration |
 | R5 | Latency, capture → published leaderboard | ≤ 150 ms p95 (broadcast overlay) | `scripts/live_demo.py` |
 | R6 | Survive occlusion: marble/marble, tunnels/supports, camera gaps | No wrong overtakes while unseen; re-acquire on reappearance | `pack`, `occlusion` scenarios |
 | R7 | Survive a camera failure mid-race | Race continues; affected section degrades to "hidden" | `camera_failure` scenario |
@@ -79,8 +79,8 @@ global-shutter 12 MP is ~$3–4k. Rolling-shutter skew distorts fast marbles and
 
 **Finish camera.** One extra 1.6 MP camera in ROI mode (a strip around the line)
 at ≥ 200 fps turns finish timing from ~±4 ms to ~±0.5 ms and is the single most
-cost-effective addition (see §9: in simulation it removed every
-"too close to call" result that was caused by frame spacing alone).
+cost-effective addition (see §10 and the `nominal` with/without finish camera
+rows of the stress suite).
 
 ## 4. Edge pipeline (per camera)
 
@@ -129,7 +129,11 @@ state *retrodicted* to its capture time (`s − lag·v`, variance inflated by th
 process noise over the lag) instead of treating old data as current.
 
 **State.** Per marble, a constant-velocity Kalman filter on `[s, v]` with white
-acceleration noise (σₐ = 4 m/s²). Measurement variance = pixel noise mapped to
+acceleration noise (σₐ = 4 m/s²). **Manoeuvre detection:** when a measurement's
+normalised innovation exceeds 9 (3σ) — a bounce, a back-slip, a sudden stop —
+the velocity uncertainty is re-opened and the process noise is boosted ×25 for
+150 ms, so the filter follows the reversal within one frame instead of lagging
+behind it. Measurement variance = pixel noise mapped to
 metres **plus a 1 cm floor**, which models the ~1 cm by which two overlapping
 cameras disagree (calibration, parallax of a marble's centre above the track,
 partial occlusion). Without the floor the filter reads that disagreement as
@@ -159,21 +163,38 @@ the run-out, then leave association once out of view.
 | Camera stops delivering frames (> 300 ms) | Its section becomes a blind zone; event logged; reverts automatically when frames resume |
 | Re-appearance | Re-acquired by colour; motion gate has widened with the covariance |
 
-**Leaderboard.**
-* Finished marbles first, by finish time; then by `s`.
-* **Hysteresis:** two adjacent marbles swap only when the trailing one leads
-  by more than half a marble diameter — no flicker when running side by side.
-* **No unseen overtakes:** a marble can only move up while it is actually
-  observed. Predictions are not evidence.
-* Status per marble: `tracking`, `coasting` (hidden, shown dimmed), `lost`,
-  `finished`.
+**Leaderboard.** Finished marbles first, by finish time; then by `s`. A marble
+seen for the first time is inserted at its true position. After that, marble B
+is shown ahead of A only when **all** of these hold:
+1. B leads by more than half a marble diameter (12.5 mm) **plus 2σ** of the two
+   latest observations' pixel uncertainty — no flicker when running side by
+   side, and partly hidden marbles (larger σ) need a clearer lead;
+2. B is currently observed — a hidden marble's predicted position is not
+   evidence, so **no marble gains a place while unseen**;
+3. near the threshold (lead below one more half-diameter) the lead has held for
+   **100 ms**; frame-to-frame noise is uncorrelated, a real overtake persists.
+   Clear overtakes are shown at once.
+Lead timers run for every pair, not only adjacent ones, so a marble passing
+three rivals at once is confirmed past all three in the same instant. Status
+per marble: `tracking` (observed within 100 ms), `coasting` (hidden, shown
+dimmed), `lost`, `finished`.
 
-**Finish timing.** Linear interpolation between the two raw observations that
-bracket the finish line, with a propagated 1-σ uncertainty. Two finishers are
-flagged **photo finish** when their gap is below the system's timing resolution
-(2 ms with finish camera, 6 ms without) or below 2σ of their combined
-uncertainty. Flagged pairs go to operator review (finish-camera frames) instead
-of being decided by the algorithm.
+**Finish timing.** On the crossing frame a provisional time is interpolated
+between the two bracketing observations. 30 ms later it is replaced by a
+**weighted least-squares fit** `s(t) = b₀ + b₁τ + b₂τ²` to every raw observation
+within ±30 ms (≈14 points from a 240 fps finish camera), solved for
+`s(t) = s_finish` by Newton's method. The 1σ finish uncertainty is propagated
+from the fit covariance (inflated by the reduced χ² when residuals exceed the
+stated noise). Two finishers are flagged **photo finish** when their gap is
+below `max(0.5 ms, 3·√(σ₁²+σ₂²))` (6 ms floor without a finish camera); the
+3σ rule bounds an unflagged wrong order to errors beyond 3σ. Flagged pairs go
+to operator review of the finish-camera frames instead of being decided by the
+algorithm. The first crossing counts: a marble that slips back over the line
+keeps its original time.
+
+**Input hygiene.** Detections with NaN/inf values, a wrong palette size, or no
+finite track candidates are dropped before association; they can never reach
+the filter state.
 
 ## 6. Calibration (once per installation, ~1–2 h)
 
@@ -246,7 +267,8 @@ Mode A (master + finish camera) ≈ $3–5k including compute and lighting.
 | Fusion + leaderboard | `marbletrack/fusion.py` | Association, KF, blind zones, camera health, photo finish, events |
 | Runtime | `marbletrack/runtime.py` | Edge processes, reorder buffer, HTTP/JSON leaderboard publisher |
 | Simulator | `marbletrack/sim.py` | Track, physics-free race, camera rigs, rendering, calibration |
-| Evaluation | `marbletrack/race.py`, `scripts/monte_carlo.py` | Scenarios, ground-truth scoring |
+| Evaluation | `marbletrack/race.py`, `marbletrack/edgecases.py`, `scripts/monte_carlo.py` | Scenarios, F1-grade edge cases, ground-truth scoring |
+| Demos | `scripts/render_demo.py`, `demo/track3d.html`, `scripts/live_demo.py` | Annotated video, interactive 3D replay, real-time run |
 
 **Detection message** (edge → fusion): `cam_id, t_capture, [ {xy, area,
 color_d2[K], candidates:[{s, dist, s_per_unit}], sigma_px} ]`. Heartbeat =
@@ -257,13 +279,41 @@ marble_id, progress_m, speed_mps, status, finish_time, gap_m, photo_finish}],
 cameras:{id: online}` plus an event stream (`finish`, `camera_offline`,
 `camera_online`).
 
-**Production hardening still to do** (planned in §10): camera SDK adapter
+**Production hardening still to do** (planned in §11): camera SDK adapter
 (GenICam via the vendor SDK or Harvester), ZeroMQ/NATS transport between hosts
 (the in-process queue is the same message contract), C++ port of the edge
 detector hot loop, calibration GUI, operator review UI for photo finishes,
 recording of raw frames around the finish for audit, metrics/alerting.
 
-## 9. Evidence summary
+## 9. Edge cases and guarantees
+
+**Scripted F1-grade cases** (`marbletrack/edgecases.py`, scored by
+`run_edge_case()`):
+
+| Case | What it does | Pass criterion |
+|---|---|---|
+| `photo_finish` | Five side-by-side pairs cross 0.1–8 ms apart | No wrong *unflagged* call; σ calibrated |
+| `corner_duel` | Inside line passes outside line by 3 cm in a 180° turn; second pair dithers ±8 mm | Exactly one displayed overtake; zero flicker on the dead heat |
+| `backward_slip` | Reversals at up to 1 m/s on a straight, in a corner and just past the finish | No lost marbles, ranks correct, first crossing timed |
+| `fast_handoff` | 3–3.5 m/s, 14 cameras, 3 cm overlap, 30 fps, ±1 cm calibration bias | No ID errors, ranks correct through every hand-off |
+
+**Invariants**, fuzzed with Hypothesis over random input streams (clutter
+blobs, ambiguous colours, duplicates, out-of-order and repeated timestamps,
+NaNs, silent cameras) and checked after every frame (`tests/test_invariants.py`):
+one detection per marble per frame; finite state and symmetric PSD covariance;
+the board is always a valid permutation with finished marbles first in
+finish-time order; close finishes are flagged; confirmed finish times never
+change; **no marble moves up past a rival unless it is observed**.
+
+**Physical limits that remain** (stated, not hidden): a reversal inside one
+frame interval produces a one-frame position error of up to one frame of travel
+(≈5 cm at 30 fps, halved at 60 fps); finish gaps below ≈1 ms with a 240 fps
+finish camera are flagged rather than called; marbles inside a tunnel cannot be
+ranked against each other until they reappear; one-sided lighting shifts every
+marble's visible centroid equally (≈0.2 ms common-mode finish offset), which does
+not affect order and is removed by one light-gate calibration run.
+
+## 10. Evidence summary
 
 All numbers are produced by the code in this repository; re-run with the
 commands in the README. The full stakeholder report with charts is
@@ -280,10 +330,10 @@ conditions (marbles pass *through* each other, so a marble can be hidden by
 another for long stretches — physically impossible from a top-down view). It
 does not validate real optics, real colour behaviour of glass marbles
 (swirls, transparency, reflections of neighbours) or real lighting. Those are
-the purpose of the on-site acceptance phase (§10, phase 2), which uses the same
+the purpose of the on-site acceptance phase (§11, phase 2), which uses the same
 metrics against manually annotated video.
 
-## 10. Implementation plan
+## 11. Implementation plan
 
 | Phase | Duration | Deliverables | Exit criteria |
 |---|---|---|---|
@@ -298,7 +348,7 @@ Team: 1 computer-vision engineer (lead), 1 software engineer (runtime,
 overlay, tooling), part-time technician for rig/lighting. **~11–12 weeks to
 production.**
 
-## 11. Risks and mitigations
+## 12. Risks and mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
