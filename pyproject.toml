@@ -1,0 +1,13 @@
+[project]
+name = "marbletrack"
+version = "0.1.0"
+description = "Real-time colour-based marble race tracking with multi-camera fusion"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "opencv-python-headless>=4.8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

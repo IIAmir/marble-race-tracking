@@ -1,0 +1,44 @@
+import numpy as np
+
+from marbletrack.color import ColorModel, bgr_to_lab, palette_separation
+from marbletrack.detector import ColorDetector
+from marbletrack.sim import DEFAULT_MARBLES, RaceConfig, RaceSimulator, multi_camera_rig, serpentine_track
+
+
+def _camera():
+    cfg = RaceConfig()
+    track = serpentine_track(cfg)
+    sim = RaceSimulator(track, DEFAULT_MARBLES, cfg, seed=1)
+    cam = multi_camera_rig(track, cfg, seed=1)[2]
+    return cfg, track, cam, cam.calibration(DEFAULT_MARBLES, sim)
+
+
+def test_colour_model_rejects_specular_outliers():
+    rng = np.random.default_rng(0)
+    red = np.tile([[40, 40, 210]], (500, 1)) + rng.normal(0, 4, (500, 3))
+    glare = np.tile([[250, 250, 250]], (40, 1))
+    model = ColorModel.fit(bgr_to_lab(np.clip(np.vstack([red, glare]), 0, 255)))
+    assert model.d2(bgr_to_lab([[40, 40, 210]]))[0] < 3
+    assert model.d2(bgr_to_lab([[250, 250, 250]]))[0] > 100
+
+
+def test_detector_finds_touching_marbles_of_different_colours():
+    cfg, track, cam, calib = _camera()
+    det = ColorDetector(calib)
+    s_mid = sum(cam.s_range) / 2
+    s = np.array([s_mid, s_mid + 2 * cfg.marble_radius * 0.95])  # touching
+    xy, _ = track.point_at(s)
+    frame = cam.render(xy, [True, True], [DEFAULT_MARBLES[0].bgr, DEFAULT_MARBLES[4].bgr])
+    dets = det.detect(frame, 0.0)
+    ids = sorted(int(np.argmin(d.color_d2)) for d in dets)
+    assert ids == [0, 4]
+    for d in dets:
+        k = int(np.argmin(d.color_d2))
+        true_s = s[0] if k == 0 else s[1]
+        assert abs(d.candidates[0].s - true_s) < 0.01
+
+
+def test_palette_is_separable_for_default_marbles():
+    *_, calib = _camera()
+    sep = palette_separation(calib.palette)
+    assert sep.min() > 50
