@@ -186,14 +186,17 @@ class ColorDetector:
         for g in np.flatnonzero(counts >= self.min_area):
             if inside[g] < self.min_inside * counts[g]:
                 continue  # cut by the section edge or belongs to neighbouring track
-            sel = inverse == g
+            sel = self._contiguous(xs, ys, inverse == g)
+            n_px = int(sel.sum())
+            if n_px < self.min_area:
+                continue
             xy = np.array([xs[sel].mean(), ys[sel].mean()])
             cands = [c for c in self.calib.centerline.project(xy, self.calib.max_lateral_px)
                      if self._inside_coverage(c)]
             if not cands:
                 continue
             full = 0.85 * self.calib.expected_area(cands[0].s)  # highlight pixels go unclassified
-            if counts[g] < self.min_area_frac * full / 0.85:
+            if n_px < self.min_area_frac * full / 0.85:
                 continue
             median_lab = np.median(lab[sel], axis=0)
             color_d2 = d2_matrix(self.palette, median_lab)[0]
@@ -204,14 +207,35 @@ class ColorDetector:
                     cam_id=self.calib.cam_id,
                     t=t,
                     xy=xy,
-                    area=int(counts[g]),
+                    area=n_px,
                     color_d2=color_d2,
                     candidates=cands,
                     # A partly hidden marble's visible centroid shifts by up to ~r/2.
-                    sigma_px=1.0 + 0.5 * np.sqrt(full / 0.85 / np.pi) * max(0.0, 1.0 - counts[g] / full),
+                    sigma_px=1.0 + 0.5 * np.sqrt(full / 0.85 / np.pi) * max(0.0, 1.0 - n_px / full),
                 )
             )
         return dets
+
+    @staticmethod
+    def _contiguous(xs, ys, sel):
+        """Keep the largest spatially connected piece of one colour inside a blob.
+
+        When several marbles merge into one foreground blob, the small white
+        specular highlights of all of them share the white marble's colour; they
+        are scattered specks, while a real marble is one contiguous patch.
+        """
+        gx, gy = xs[sel], ys[sel]
+        x0, y0 = gx.min(), gy.min()
+        m = np.zeros((gy.max() - y0 + 1, gx.max() - x0 + 1), np.uint8)
+        m[gy - y0, gx - x0] = 1
+        n, lbl, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+        if n <= 2:
+            return sel
+        big = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        idx = np.flatnonzero(sel)[lbl[gy - y0, gx - x0] == big]
+        out = np.zeros_like(sel)
+        out[idx] = True
+        return out
 
     def _adapt_color(self, color_d2: np.ndarray, median_lab: np.ndarray) -> None:
         # Follow slow illumination drift, but only from unambiguous blobs so a
