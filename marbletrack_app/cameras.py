@@ -271,7 +271,11 @@ class DemoWorld:
         """Longest stretch this camera sees that is not inside a tunnel (cached)."""
         cache = self.__dict__.setdefault("_park_cache", {})
         if cam.cam_id not in cache:
+            # inside the stretch the demo's own waypoint marks cover (the tracker's band ends there)
+            _, marks = self.waypoints(cam.cam_id, 0.05 if cam.cam_id == "finish" else 0.2, jitter_px=0.0)
             _, s_vis = self.waypoints(cam.cam_id, 0.02, jitter_px=0.0)
+            if len(marks) >= 2:
+                s_vis = [x for x in s_vis if marks[0] + 0.03 <= x <= marks[-1] - 0.03]
             s_vis = np.array([x for x in s_vis if not any(a - 0.04 <= x <= b + 0.04 for a, b in self.cfg.tunnels)])
             if len(s_vis) < 2:
                 cache[cam.cam_id] = tuple(cam.s_range)
@@ -291,7 +295,7 @@ class DemoWorld:
         """
         lo, hi = self._park_range(cam)
         k = len(self.marbles)
-        margin = min(0.2, 0.15 * (hi - lo))  # stay inside the clicked waypoints at both ends
+        margin = min(0.08, 0.1 * (hi - lo))
         lo, hi = lo + margin, hi - margin
         span = hi - lo
         per = max(1, min(k, int(span / 0.05) + 1))

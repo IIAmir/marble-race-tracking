@@ -476,7 +476,7 @@ class App:
             if cam.backend != "demo":
                 raise UserError("automatic waypoints exist only for demo cameras")
             uv, s = demo_world().waypoints(cam.device, self.project.marker_spacing if cam.role == "section" else 0.05,
-                                           jitter_px=1.0, seed=hash(key) % 1000)
+                                           jitter_px=1.0, seed=sum(map(ord, key)))  # deterministic on every OS
             cam.markers = [[round(a, 2), round(b, 2)] for a, b in uv]
             cam.marker_s = s
         return self.state()
@@ -603,7 +603,7 @@ class App:
         dcam = w.camera(cam.device)
         self._set_demo_scene("parked")
         lc = self.live_camera(key)
-        done = set()
+        done, fails = set(), {}
         deadline = time.time() + 4 * w.PARK_PERIOD
         while len(done) < len(self.project.marbles) and time.time() < deadline:
             frame, _ = lc.wait(lc.seq, timeout=2.0)
@@ -614,11 +614,12 @@ class App:
                 continue
             uv, _ = dcam.project(np.c_[xy, np.full(len(xy), w.cfg.marble_radius)])
             for k, m in enumerate(self.project.marbles):
-                if k < len(vis) and vis[k] and m.id not in done:
+                if k < len(vis) and vis[k] and m.id not in done and fails.get(m.id, 0) < 5:
                     try:
                         self._sample(key, m.id, float(uv[k][0]), float(uv[k][1]))
                         done.add(m.id)
                     except UserError as e:
+                        fails[m.id] = fails.get(m.id, 0) + 1
                         log.info("demo autofill %s %s: %s", key, m.id, e)
             if len(done) < len(self.project.marbles):
                 time.sleep(0.3)

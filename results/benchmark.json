@@ -11,10 +11,10 @@
    "width": 1440,
    "height": 1080,
    "fps": 60,
-   "ms_median": 10.096938500282704,
-   "ms_p95": 13.3337498507899,
+   "ms_median": 10.71854900010294,
+   "ms_p95": 22.761822200391176,
    "budget_ms": 16.666666666666668,
-   "cores_needed_at_fps": 0.6058163100169622,
+   "cores_needed_at_fps": 0.6431129400061764,
    "detections": 10
   },
   {
@@ -22,10 +22,10 @@
    "width": 1440,
    "height": 1080,
    "fps": 60,
-   "ms_median": 19.996076499410265,
-   "ms_p95": 33.376954999766895,
+   "ms_median": 19.909512500362325,
+   "ms_p95": 33.95561035017635,
    "budget_ms": 16.666666666666668,
-   "cores_needed_at_fps": 1.1997645899646159,
+   "cores_needed_at_fps": 1.1945707500217395,
    "detections": 10
   },
   {
@@ -33,10 +33,10 @@
    "width": 1920,
    "height": 1200,
    "fps": 51,
-   "ms_median": 18.71233099973324,
-   "ms_p95": 39.20685259945458,
+   "ms_median": 18.977664499743696,
+   "ms_p95": 40.052349849702296,
    "budget_ms": 19.607843137254903,
-   "cores_needed_at_fps": 0.9543288809863952,
+   "cores_needed_at_fps": 0.9678608894869285,
    "detections": 10
   },
   {
@@ -44,17 +44,17 @@
    "width": 720,
    "height": 240,
    "fps": 240,
-   "ms_median": 11.691176000567793,
-   "ms_p95": 17.50719929914339,
+   "ms_median": 11.846481999782554,
+   "ms_p95": 16.249788250161146,
    "budget_ms": 4.166666666666667,
-   "cores_needed_at_fps": 2.8058822401362704,
+   "cores_needed_at_fps": 2.843155679947813,
    "detections": 10
   }
  ],
- "fusion_ms_per_frame_median": 1.2062084997523925,
+ "fusion_ms_per_frame_median": 1.219032499648165,
  "sizing": {
-  "mode_b_cores_14_cams_at_60fps": 8.481428340237471,
-  "mode_a_cores_master_at_51fps": 0.9543288809863952,
-  "finish_cores_at_240fps": 2.8058822401362704
+  "mode_b_cores_14_cams_at_60fps": 9.003581160086469,
+  "mode_a_cores_master_at_51fps": 0.9678608894869285,
+  "finish_cores_at_240fps": 2.843155679947813
  }
 }

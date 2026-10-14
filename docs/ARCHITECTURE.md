@@ -386,7 +386,7 @@ Measured by `scripts/monte_carlo.py` (220 races, 732,935 camera frames), `script
 |---|---|---|---|
 | Identity: No marble ever takes another marble's name | 0 errors | 0 in 220 races | PASS |
 | Official result: Final order correct; pairs too close to call are flagged for review | 100 % of races | 200/200 | PASS |
-| No phantom overtakes: Every pass shown on the board happened on the track | 0 | 0 of 18,273 displayed passes | PASS |
+| No phantom overtakes: Every pass shown on the board happened on the track | 0 | 0 of 18,149 displayed passes | PASS |
 | Live ranking: Visible marbles in true order, 100 ms display budget | ≥ 99.5 % in every race | worst race 100.00 %, mean 100.000 % | PASS |
 | Photo finishes: Wrong finish calls that were not flagged | 0 | 0 of 100 (51 flagged, 49 called) | PASS |
 | Honest uncertainty: Finish-gap errors beyond 3σ of the stated uncertainty | ≤ 1 % | 0 of 100 | PASS |
@@ -394,27 +394,27 @@ Measured by `scripts/monte_carlo.py` (220 races, 732,935 camera frames), `script
 | Backward slips: Marbles lost through bounces and reversals | 0 | 0 in 20 races | PASS |
 | Angled-view geometry: Progress error over 14 cameras at ~45°, all lanes | p95 ≤ 3 mm | median 0.48 mm, p95 1.40 mm | PASS |
 | Camera failure: Two cameras die mid-race | results correct, 0 ID errors | all races correct | PASS |
-| Latency: Capture → fused leaderboard, 15 cameras live | p95 ≤ 150 ms | p95 64 ms | PASS |
-| Compute: Detection for 14 cameras at 60 fps, at the processing resolution the suite validated | ≤ 16 cores (4 edge PCs) | 8.5 cores | PASS |
-| Invariants and unit tests: Property-based fuzzing + unit tests | all pass | 23/23 | PASS |
+| Latency: Capture → fused leaderboard, 15 cameras live | p95 ≤ 150 ms | p95 62 ms | PASS |
+| Compute: Detection for 14 cameras at 60 fps, at the processing resolution the suite validated | ≤ 16 cores (4 edge PCs) | 9.0 cores | PASS |
+| Invariants and unit tests: Property-based fuzzing + unit tests | all pass | 39/39 | PASS |
 
 | Scenario · cameras | Races | Official correct | Rank strict (mean) | Rank, 100 ms budget (worst race) | Phantom overtakes | Incl. hidden | ID errors |
 |---|---|---|---|---|---|---|---|
-| Nominal race · 14 angled cams | 10 | 10/10 | 99.85% | 100.00% | 0 | 97.6% | 0 |
-| Nominal race · 14 angled cams · no finish cam | 10 | 10/10 | 99.79% | 100.00% | 0 | 97.6% | 0 |
-| Nominal race · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 97.0% | 0 |
-| Nominal race · 1 overhead cam · no finish cam | 10 | 10/10 | 99.94% | 100.00% | 0 | 96.7% | 0 |
+| Nominal race · 14 angled cams | 10 | 10/10 | 99.88% | 100.00% | 0 | 97.5% | 0 |
+| Nominal race · 14 angled cams · no finish cam | 10 | 10/10 | 99.82% | 100.00% | 0 | 97.4% | 0 |
+| Nominal race · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 96.7% | 0 |
+| Nominal race · 1 overhead cam · no finish cam | 10 | 10/10 | 99.94% | 100.00% | 0 | 96.4% | 0 |
 | Tight pack · 14 angled cams | 10 | 10/10 | 99.97% | 100.00% | 0 | 99.4% | 0 |
-| Tight pack · 1 overhead cam | 10 | 10/10 | 100.00% | 100.00% | 0 | 98.0% | 0 |
-| Three tunnels · 14 angled cams | 10 | 10/10 | 99.85% | 100.00% | 0 | 95.3% | 0 |
-| Three tunnels · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 93.7% | 0 |
-| Two cameras fail · 14 angled cams | 10 | 10/10 | 99.88% | 100.00% | 0 | 84.8% | 0 |
-| Frame loss + jitter · 14 angled cams | 10 | 10/10 | 99.74% | 100.00% | 0 | 96.5% | 0 |
-| Frame loss + jitter · 1 overhead cam | 10 | 10/10 | 99.88% | 100.00% | 0 | 95.7% | 0 |
-| Lighting −20 % · 14 angled cams | 10 | 10/10 | 99.85% | 100.00% | 0 | 97.6% | 0 |
-| Lighting −20 % · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 97.0% | 0 |
-| Worst case (all at once) · 14 angled cams | 10 | 10/10 | 99.97% | 100.00% | 0 | 97.3% | 0 |
-| Worst case (all at once) · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 95.6% | 0 |
+| Tight pack · 1 overhead cam | 10 | 10/10 | 100.00% | 100.00% | 0 | 97.6% | 0 |
+| Three tunnels · 14 angled cams | 10 | 10/10 | 99.88% | 100.00% | 0 | 95.1% | 0 |
+| Three tunnels · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 93.1% | 0 |
+| Two cameras fail · 14 angled cams | 10 | 10/10 | 99.88% | 100.00% | 0 | 84.7% | 0 |
+| Frame loss + jitter · 14 angled cams | 10 | 10/10 | 99.74% | 100.00% | 0 | 96.2% | 0 |
+| Frame loss + jitter · 1 overhead cam | 10 | 10/10 | 99.88% | 100.00% | 0 | 95.2% | 0 |
+| Lighting −20 % · 14 angled cams | 10 | 10/10 | 99.88% | 100.00% | 0 | 97.5% | 0 |
+| Lighting −20 % · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 96.7% | 0 |
+| Worst case (all at once) · 14 angled cams | 10 | 10/10 | 99.97% | 100.00% | 0 | 96.4% | 0 |
+| Worst case (all at once) · 1 overhead cam | 10 | 10/10 | 99.97% | 100.00% | 0 | 93.8% | 0 |
 <!-- RESULTS:END -->
 
 **What simulation proves, and what it does not.** The simulator validates the
