@@ -118,8 +118,14 @@ def run_live(mode="multi", scenario="nominal", seed=0, fps=30.0, nodes=3, finish
     duration = duration or sim.duration + 0.3
     args = dict(mode=mode, scenario=scenario, seed=seed, fps=fps, finish_cam=finish_cam, duration=duration)
     ids = [m.marble_id for m in DEFAULT_MARBLES]
-    nodes = max(1, min(nodes, len(cams)))
-    split = [list(range(len(cams)))[i::nodes] for i in range(nodes)]
+    # High-rate cameras (the 240 fps finish camera) get an edge node of their own, as in the
+    # production design; the remaining cameras are spread round-robin over the other nodes.
+    fast = [k for k, c in enumerate(cams) if (c.fps or fps) > 60]
+    slow = [k for k, c in enumerate(cams) if (c.fps or fps) <= 60]
+    rest = max(1, min(nodes - len(fast), len(slow)))
+    split = [slow[i::rest] for i in range(rest)] + [[k] for k in fast]
+    split = [g for g in split if g]
+    nodes = len(split)
 
     ctx = mp.get_context("fork")
     q, ready, stop = ctx.Queue(), ctx.Semaphore(0), ctx.Event()

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import copy
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -61,6 +62,23 @@ def foreground_mask(frame, background, threshold, roi=None, kernel=None) -> np.n
     return fg if kernel is None else cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel)
 
 
+def scale_calibration(calib: CameraCalibration, k: float) -> CameraCalibration:
+    """The same calibration expressed for frames resized by factor ``k``."""
+    w, h = calib.track_mask.shape[::-1]
+    size = (max(1, round(w * k)), max(1, round(h * k)))
+    cl = calib.centerline
+    line = Polyline(cl.points * k, cl.s, None if cl.normals is None else cl.normals * k)
+    return replace(
+        calib,
+        centerline=line,
+        track_mask=cv2.resize(calib.track_mask, size, interpolation=cv2.INTER_NEAREST),
+        marble_radius_px=calib.marble_radius_px * k,
+        max_lateral_px=calib.max_lateral_px if cl.normals is not None else calib.max_lateral_px * k,
+        background=cv2.resize(calib.background, size, interpolation=cv2.INTER_AREA),
+        area_px=None if calib.area_px is None else calib.area_px * k * k,
+    )
+
+
 class ColorDetector:
     """Background subtraction + per-pixel colour classification + blob grouping.
 
@@ -85,9 +103,14 @@ class ColorDetector:
         bg_alpha: float = 0.05,
         bg_every: int = 10,
         color_alpha: float = 0.03,
+        work_scale: float = 1.0,
     ):
         if calib.background is None or not calib.palette:
             raise ValueError("camera needs a background and a colour palette")
+        self.work_scale = work_scale
+        self.full_size = calib.track_mask.shape[::-1]
+        if work_scale != 1.0:
+            calib = scale_calibration(calib, work_scale)
         self.calib = calib
         self.fg_threshold = fg_threshold
         self.pixel_gate = pixel_gate
@@ -160,6 +183,17 @@ class ColorDetector:
             self._bg_small = cv2.resize(self.background, self._small, interpolation=cv2.INTER_AREA)
 
     def detect(self, frame: np.ndarray, t: float) -> list[Detection]:
+        if self.work_scale != 1.0:
+            # Processing resolution: detect on a downscaled frame (the stress suite ran on
+            # 640x480 cameras, i.e. below half of a 1.6 MP sensor); report full-frame pixels.
+            frame = cv2.resize(frame, self.calib.track_mask.shape[::-1], interpolation=cv2.INTER_AREA)
+            dets = self._detect(frame, t)
+            for d in dets:
+                d.xy = d.xy / self.work_scale
+            return dets
+        return self._detect(frame, t)
+
+    def _detect(self, frame: np.ndarray, t: float) -> list[Detection]:
         self.gain = self._measure_gain(frame)
         fg = self.foreground(frame)
         self._frames += 1

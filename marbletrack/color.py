@@ -48,8 +48,21 @@ class ColorModel:
 
 
 def d2_matrix(models: list[ColorModel], lab) -> np.ndarray:
-    """(N, K) squared Mahalanobis distances of N Lab pixels to K marble models."""
-    return np.stack([m.d2(lab) for m in models], axis=1)
+    """(N, K) squared Mahalanobis distances of N Lab pixels to K marble models.
+
+    Each model's distance (x - mu)^T A (x - mu) is a quadratic polynomial in the
+    pixel's (L, a, b), so all K models are scored with one (N, 10) x (10, K)
+    matrix product instead of K separate per-pixel quadratic forms.
+    """
+    x = np.asarray(lab, dtype=np.float64).reshape(-1, 3)
+    feats = np.column_stack([x[:, 0] ** 2, x[:, 1] ** 2, x[:, 2] ** 2, x[:, 0] * x[:, 1], x[:, 0] * x[:, 2],
+                             x[:, 1] * x[:, 2], x[:, 0], x[:, 1], x[:, 2], np.ones(len(x))])
+    W = np.empty((10, len(models)))
+    for k, m in enumerate(models):
+        A, mu = m.cov_inv, m.mean
+        b = A @ mu
+        W[:, k] = [A[0, 0], A[1, 1], A[2, 2], 2 * A[0, 1], 2 * A[0, 2], 2 * A[1, 2], -2 * b[0], -2 * b[1], -2 * b[2], mu @ b]
+    return np.maximum(feats @ W, 0.0)
 
 
 def palette_separation(models: list[ColorModel]) -> np.ndarray:

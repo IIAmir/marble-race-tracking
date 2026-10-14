@@ -25,12 +25,21 @@ from marbletrack.sim import (DEFAULT_MARBLES, RaceConfig, RaceSimulator, finish_
                              multi_camera_rig, serpentine_track, single_camera_rig)
 
 CASES = [
-    # name, camera, fps the camera runs at in production, detector options
-    ("Segment camera 1440x1080 (IMX273)", "segment", 60, {}),
-    ("Master camera 1920x1200 (IMX392)", "master", 51, {}),
-    ("Master camera 1920x1200, half-res foreground", "master", 51, {"fg_scale": 0.5}),
-    ("Finish camera ROI 720x240 @ 240 fps", "finish", 240, {}),
+    # name, camera, fps the camera runs at in production, detector options.
+    # Processing resolutions match what the stress suite validated: segment cameras ran at
+    # 640x480 there (below half of 1440x1080), the finish camera at 480x240.
+    ("Segment camera 1440x1080 (IMX273), processed at 720x540", "segment", 60, {"work_scale": 0.5}),
+    ("Segment camera 1440x1080, full resolution", "segment", 60, {}),
+    ("Overhead camera 1920x1200 (IMX392), half-res foreground", "master", 51, {"fg_scale": 0.5}),
+    ("Finish camera ROI 720x240, processed at 480x160", "finish", 240, {"work_scale": 2 / 3}),
 ]
+
+
+def _place(cam, track, colors):
+    lo, hi = cam.s_range
+    s = np.linspace(lo + 0.04, hi - 0.04, len(colors))
+    xy, _ = track.point_at(s)
+    return xy, np.ones(len(s), bool), colors
 
 
 def main():
@@ -54,6 +63,7 @@ def main():
     for name, which, fps, opts in CASES:
         cam = cams[which]
         det = ColorDetector(cam.calibration(DEFAULT_MARBLES, sim), **opts)
+        assert len(det.detect(cam.render(*_place(cam, track, colors)), 0.0)) >= 9, name  # detection still works
         # Place all ten marbles inside this camera's section, spread along it.
         lo, hi = cam.s_range
         s = np.linspace(lo + 0.04, hi - 0.04, len(colors))
@@ -88,10 +98,11 @@ def main():
         eng.leaderboard()
         times.append((time.perf_counter() - t0) * 1e3)
     out["fusion_ms_per_frame_median"] = float(np.median(times[50:]))
-    seg, mas = out["cases"][0], out["cases"][1]
+    seg, mas = out["cases"][0], out["cases"][2]
     out["sizing"] = {
         "mode_b_cores_14_cams_at_60fps": 14 * seg["cores_needed_at_fps"],
         "mode_a_cores_master_at_51fps": mas["cores_needed_at_fps"],
+        "finish_cores_at_240fps": out["cases"][3]["cores_needed_at_fps"],
     }
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(out, indent=1))

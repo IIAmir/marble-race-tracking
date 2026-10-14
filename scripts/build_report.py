@@ -239,7 +239,8 @@ def gates(d):
     b = d["bench"]
     if b:
         cores = b["sizing"]["mode_b_cores_14_cams_at_60fps"]
-        add("Compute", "Detection for 14 cameras at 60 fps", "≤ 16 cores (4 edge PCs)", f"{cores:.1f} cores", cores <= 16)
+        add("Compute", "Detection for 14 cameras at 60 fps, at the processing resolution the suite validated", "≤ 16 cores (4 edge PCs)",
+            f"{cores:.1f} cores", cores <= 16)
     t = d["tests"]
     if t:
         add("Invariants and unit tests", "Property-based fuzzing + unit tests", "all pass", f"{t['passed']}/{t['total']}",
@@ -493,7 +494,7 @@ flowchart TB
     <figure class="chartbox">
       <figcaption><b>Edge detector time per frame</b> (one CPU core, Python + OpenCV) <span class="legend"><i class="s1"></i>median time <i class="budget-key"></i>frame budget at the camera's rate</span></figcaption>
       {bench_chart(bench['cases'])}
-      <p class="note">Fourteen segment cameras at 60 fps need about {bench['sizing']['mode_b_cores_14_cams_at_60fps']:.1f} cores for detection in total. Fusion of one camera frame takes {bench['fusion_ms_per_frame_median']:.2f} ms on one core.</p>
+      <p class="note">Segment cameras are processed at 720×540, half of their 1440×1080 sensor. The stress suite ran its cameras at 640×480, so that is the resolution it validated. Fourteen of them at 60 fps need about {bench['sizing']['mode_b_cores_14_cams_at_60fps']:.1f} cores in total. The 240 fps finish camera needs about {bench['sizing'].get('finish_cores_at_240fps', 0):.1f} cores and gets an edge PC of its own. Fusion of one camera frame plus a leaderboard update takes {bench['fusion_ms_per_frame_median']:.2f} ms on one core.</p>
     </figure>
     <div>
       <h3>Live run: the full system in wall-clock time</h3>
@@ -503,7 +504,7 @@ flowchart TB
         {f'<div class="tile"><strong>{100 * lm["live_rank_accuracy_visible"]:.1f}%</strong><span>live board correct</span><small>{lm["frames_processed"]:,} frames, {lm["frames_dropped_realtime"]} dropped as late</small></div>' if lm else ''}
         {f'<div class="tile"><strong>{ls["capture_to_fusion_ms"]["p95"]:.0f} ms</strong><span>overhead-camera rig, p95</span><small>{ls["frames_processed"]:,} frames, {ls["frames_dropped_realtime"]} dropped</small></div>' if ls else ''}
       </div>
-      <p class="note">Measured on a {bench['machine']['cores']}-core cloud container that also renders every virtual camera image, so real hardware has more headroom.</p>
+      <p class="note">Measured on a {bench['machine']['cores']}-core cloud container that also renders all 15 virtual 3D camera images in Python. That rendering, not detection, saturates the container, so edge nodes drop late frames ({lm.get("frames_dropped_realtime", 0):,} here) to keep latency bounded. Real cameras deliver frames without that cost.</p>
     </div>
   </div>
 </section>""")

@@ -1,0 +1,60 @@
+{
+ "machine": {
+  "cpu": "x86_64",
+  "cores": 4,
+  "python": "3.13.16",
+  "opencv": "5.0.0"
+ },
+ "cases": [
+  {
+   "name": "Segment camera 1440x1080 (IMX273), processed at 720x540",
+   "width": 1440,
+   "height": 1080,
+   "fps": 60,
+   "ms_median": 10.096938500282704,
+   "ms_p95": 13.3337498507899,
+   "budget_ms": 16.666666666666668,
+   "cores_needed_at_fps": 0.6058163100169622,
+   "detections": 10
+  },
+  {
+   "name": "Segment camera 1440x1080, full resolution",
+   "width": 1440,
+   "height": 1080,
+   "fps": 60,
+   "ms_median": 19.996076499410265,
+   "ms_p95": 33.376954999766895,
+   "budget_ms": 16.666666666666668,
+   "cores_needed_at_fps": 1.1997645899646159,
+   "detections": 10
+  },
+  {
+   "name": "Overhead camera 1920x1200 (IMX392), half-res foreground",
+   "width": 1920,
+   "height": 1200,
+   "fps": 51,
+   "ms_median": 18.71233099973324,
+   "ms_p95": 39.20685259945458,
+   "budget_ms": 19.607843137254903,
+   "cores_needed_at_fps": 0.9543288809863952,
+   "detections": 10
+  },
+  {
+   "name": "Finish camera ROI 720x240, processed at 480x160",
+   "width": 720,
+   "height": 240,
+   "fps": 240,
+   "ms_median": 11.691176000567793,
+   "ms_p95": 17.50719929914339,
+   "budget_ms": 4.166666666666667,
+   "cores_needed_at_fps": 2.8058822401362704,
+   "detections": 10
+  }
+ ],
+ "fusion_ms_per_frame_median": 1.2062084997523925,
+ "sizing": {
+  "mode_b_cores_14_cams_at_60fps": 8.481428340237471,
+  "mode_a_cores_master_at_51fps": 0.9543288809863952,
+  "finish_cores_at_240fps": 2.8058822401362704
+ }
+}

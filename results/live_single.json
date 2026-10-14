@@ -1,0 +1,46 @@
+{
+ "mode": "single",
+ "scenario": "nominal",
+ "cameras": 2,
+ "edge_nodes": 2,
+ "frames_processed": 2780,
+ "frames_dropped_realtime": 309,
+ "wall_duration_s": 11.474999999999246,
+ "edge_cpu_utilisation": 0.8778834753402766,
+ "capture_to_fusion_ms": {
+  "p50": 53.26599350672711,
+  "p95": 57.38211317415072,
+  "p99": 62.1880000432332
+ },
+ "board_age_ms": {
+  "p50": 49.99999999999982,
+  "p95": 50.00000000000071,
+  "p99": 50.00000000000071
+ },
+ "live_rank_accuracy_visible": 1.0,
+ "final_order": [
+  "Leaf",
+  "Teal",
+  "Navy",
+  "Amber",
+  "Rose",
+  "Ruby",
+  "Sun",
+  "Snow",
+  "Violet",
+  "Sky"
+ ],
+ "truth_order": [
+  "Leaf",
+  "Teal",
+  "Navy",
+  "Amber",
+  "Rose",
+  "Ruby",
+  "Sun",
+  "Snow",
+  "Violet",
+  "Sky"
+ ],
+ "finish_err_ms_max": 0.26525157617030004
+}
