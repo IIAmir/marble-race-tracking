@@ -65,7 +65,10 @@ freely; **Go live** unlocks when every step is complete.
 1. **Race & marbles.** Enter the track length, where the finish line is, and the
    waypoint-mark spacing (default 20 cm). Then add the marbles, with a name and a display
    colour each. Under *More track settings* are the start line for the race clock, the channel
-   width, the marble size, tunnels (blind zones) and automatic new races.
+   width, the marble size, tunnels (blind zones), *wider sections of the channel* (obstacle
+   zones and splitters, e.g. `6.5–7.0 @ 105` for 105 mm from 6.5 m to 7.0 m: the search band
+   follows them, so a camera does not pick up balls on a neighbouring pass of the track) and
+   automatic new races.
 2. **Cameras.** Cameras are found automatically: USB/UVC via DirectShow, Basler via pylon, and NDI cameras
    on the network. NDI cameras keep the exposure, shutter and white balance set in their own web page
    (set a fixed shutter of 1/1000 s or faster there); MarbleTrack never changes them, so vMix's picture is

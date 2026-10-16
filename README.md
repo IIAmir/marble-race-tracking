@@ -12,6 +12,9 @@ occlusion handling and a live leaderboard.
 * **Windows app for the venue PC** (camera discovery, setup wizard, live tracking, WebSocket leaderboard
   streaming): [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md). Run with `python -m marbletrack_app --demo`, or build
   `MarbleTrack.exe` with `windows\build.ps1`
+* **Venue simulator** (procedural circuits, billiard balls, the 13 AIDA + OBSBOT cameras rendered and
+  tracked through the app's own calibration and tracker; what it found and fixed):
+  [`docs/VENUE_SIMULATOR.md`](docs/VENUE_SIMULATOR.md), run with `python scripts/venue_suite.py`
 * **Live race simulator:** [`demo/simulator.html`](demo/simulator.html), open in a browser (see below)
 * **Interactive 3D replay** of recorded pipeline output: [`demo/track3d.html`](demo/track3d.html)
 

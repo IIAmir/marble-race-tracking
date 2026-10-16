@@ -343,7 +343,7 @@ class ColorDetector:
                 main, frag = int(k[1].sum()), int(sel.sum())
                 if np.linalg.norm(xy - k[2]) >= self.merge_dist * np.sqrt(area / np.pi):
                     continue
-                if main + frag >= self.merge_union * area:
+                if main + frag >= self.merge_union * max(area, main):  # the size calibration may be low
                     continue
                 shade = float(d2_matrix([self.palette[k[0]]], np.median(lab[sel], axis=0))[0, 0])
                 if shade <= self.merge_shade:

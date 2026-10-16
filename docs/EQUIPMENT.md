@@ -265,6 +265,8 @@ patterns (`P{n}Name.Text`) and can be changed to match an existing title.
 | Tests: jitter removal, clock steps, processing scale, vMix against a fake vMix server, NDI loopback | `tests/test_equipment.py` |
 | Maps: list, open, new route, copy, export/import; camera-view check and waypoint carry-over | `marbletrack_app/maps.py`, *Maps* button, Review step |
 | Tests: view check (same / moved / different, light change), zip safety, reopening a map | `tests/test_maps.py` |
+| Lap races and cameras that see several stretches (both legs of a hairpin) | `fusion.py`, `calibration.py`, step 3 |
+| Shadows, wider channel sections, colour fragments, association by likelihood (found by the venue simulator, §12) | `detector.py`, `fusion.py`, step 1 |
 
 ## 11. Open questions
 
