@@ -4,6 +4,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from marbletrack_app.recording import read_frames_csv, read_jsonl
@@ -57,3 +58,48 @@ def test_live_session_is_recorded_and_replays_like_live():
     assert seen_live and seen_replay >= seen_live - {None}  # the replay sees every marble live saw
     # the recorded run, tracked again, ends in the same order as on air
     assert [e["marble_id"] for e in boards[-1]["board"]][:3] == [e["marble_id"] for e in live[-1]["board"]][:3]
+
+    # gate labels proposed from the replay, with picture strips, then the live boards scored against them
+    from marbletrack_app.labels import propose, score
+
+    gates = [0.6, 2.5]  # inside the three cameras' view
+    path = propose(session, gates, out / "boards.jsonl")
+    labels = json.loads(path.read_text())
+    assert [g["s"] for g in labels["gates"]] == gates and all(g["order"] for g in labels["gates"])
+    assert list((session / "labels").glob("gate-*.jpg"))
+    res = score(live, labels)
+    # live and replay agree up to near-ties in the starting pack (2 gates x 45 pairs)
+    assert res["gates"] == 2 and res["gate_pairs_wrong"] <= 4
+
+
+def _boards(paths, t_end=10.0, dt=0.1, swap=None):
+    """Boards for marbles moving along s(t) = paths[m](t); ``swap`` = (t0, t1, a, b) shows b ahead of a then."""
+    out = []
+    for t in np.arange(0.0, t_end, dt):
+        pos = {m: f(t) for m, f in paths.items()}
+        ids = sorted(pos, key=lambda m: -pos[m])
+        if swap and swap[0] <= t < swap[1]:
+            i, j = ids.index(swap[2]), ids.index(swap[3])
+            ids[i], ids[j] = ids[j], ids[i]
+        out.append({"now": round(float(t), 3), "board": [{"marble_id": m, "progress_m": pos[m], "status": "tracking"} for m in ids]})
+    return out
+
+
+def test_gate_scoring_counts_wrong_orders_and_time_shown_wrong():
+    from marbletrack_app.labels import gate_orders, score
+
+    paths = {"a": lambda t: 1.0 * t, "b": lambda t: 0.9 * t, "c": lambda t: 0.5 + 0.7 * t}  # c leads, a overtakes it
+    boards = _boards(paths)
+    got = gate_orders(boards, [1.0, 6.0])
+    assert got[0]["order"] == ["c", "a", "b"] and got[1]["order"] == ["a", "b", "c"]
+    assert abs(got[0]["times"]["a"] - 1.0) < 0.02  # crossing time interpolated between boards
+    labels = {"gates": [{"s": 1.0, "order": ["c", "a", "b"]}, {"s": 6.0, "order": ["a", "b", "c"]}],
+              "final_order": ["a", "b", "c"]}
+    good = score(boards, labels)
+    assert good["gate_order_exact"] == 2 and good["gate_pairs_wrong"] == 0 and good["inverted_seconds"] == 0
+    assert good["final_order_correct"]
+    # the board shows b ahead of a for half a second although a stays ahead between the gates
+    bad = score(_boards(paths, swap=(3.0, 3.5, "a", "b")), labels)
+    assert 0.4 <= bad["inverted_seconds"] <= 0.6 and bad["gate_order_exact"] == 2
+    wrong = score(boards, {**labels, "gates": [{"s": 1.0, "order": ["a", "c", "b"]}]})
+    assert wrong["gate_pairs_wrong"] == 1 and wrong["gate_order_exact"] == 0
