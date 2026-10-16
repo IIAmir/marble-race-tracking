@@ -80,3 +80,27 @@ def test_marble_beyond_section_end_is_not_reported_as_clipped_fragment():
             for d in det.detect(cam.render([xy[0]], [True], [DEFAULT_MARBLES[0].bgr]), 0.0):
                 # whatever is reported must be where the marble really is
                 assert abs(d.candidates[0].s - s) < 0.01, (cam.cam_id, s, d.candidates[0].s)
+
+
+def test_shrink_matches_area_resize_and_is_fast():
+    import time
+
+    import cv2
+
+    from marbletrack.detector import shrink
+
+    rng = np.random.default_rng(0)
+    img = cv2.GaussianBlur(rng.integers(0, 256, (1080, 1920, 3), dtype=np.uint8), (0, 0), 3)
+    size = (739, 416)  # 1080p at the processing scale of a 25 mm marble seen by an AIDA camera
+    ref = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+    got = shrink(img, size)
+    assert got.shape == ref.shape and np.abs(got.astype(int) - ref).mean() < 2.0
+    assert shrink(img, (960, 540)).shape == (540, 960, 3)
+    t = time.perf_counter()
+    for _ in range(5):
+        shrink(img, size)
+    fast = time.perf_counter() - t
+    t = time.perf_counter()
+    for _ in range(5):
+        cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+    assert fast < time.perf_counter() - t

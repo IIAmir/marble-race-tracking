@@ -52,6 +52,22 @@ class Detection:
         return self.sigma_px * cand.s_per_unit
 
 
+def shrink(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Downscale ``frame`` to ``size`` (w, h), averaging pixels like INTER_AREA.
+
+    OpenCV's INTER_AREA is fast only for whole-number factors; at a factor such as
+    0.385 (1080p processed at ~740x416) it costs more than the whole detector. So
+    halve exactly while the frame is at least twice the target, then finish with
+    a bilinear step of less than 2x, which averages nearly as well.
+    """
+    w, h = size
+    while frame.shape[1] >= 2 * w and frame.shape[0] >= 2 * h and frame.shape[1] % 2 == 0 and frame.shape[0] % 2 == 0:
+        frame = cv2.resize(frame, (frame.shape[1] // 2, frame.shape[0] // 2), interpolation=cv2.INTER_AREA)
+    if (frame.shape[1], frame.shape[0]) == (w, h):
+        return frame
+    return cv2.resize(frame, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def foreground_mask(frame, background, threshold, roi=None, kernel=None) -> np.ndarray:
     """0/1 mask of pixels whose largest per-channel difference to the background exceeds threshold."""
     b, g, r = cv2.split(cv2.absdiff(frame, background))
@@ -186,7 +202,7 @@ class ColorDetector:
         if self.work_scale != 1.0:
             # Processing resolution: detect on a downscaled frame (the stress suite ran on
             # 640x480 cameras, i.e. below half of a 1.6 MP sensor); report full-frame pixels.
-            frame = cv2.resize(frame, self.calib.track_mask.shape[::-1], interpolation=cv2.INTER_AREA)
+            frame = shrink(frame, self.calib.track_mask.shape[::-1])
             dets = self._detect(frame, t)
             for d in dets:
                 d.xy = d.xy / self.work_scale

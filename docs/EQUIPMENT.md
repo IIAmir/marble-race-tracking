@@ -189,13 +189,24 @@ receiver decodes it (NDI|HX is H.264/H.265).
 - **Network.** 14 NDI|HX streams at 1080p60/4K are well under 1 Gbit/s even counted twice,
   so the 5 GbE port is ample. Use a managed switch with **PoE+ (802.3at) on every port** and a
   budget for 13 AIDA cameras plus the OBSBOT's 30 W, and a 2.5/5/10 GbE uplink to the PC.
-- **CPU.** Measured on a 4-core cloud VM, colour detection takes ~11 ms per 1440×1080
-  frame (processed at 720×540): about 0.6 core per camera at 60 fps, ~8–9 cores for 13
-  cameras, plus decoding, plus vMix. The 9900X3D has 12 fast cores, so this is feasible
-  but tight. Measure it on the venue PC: the live screen shows each camera's frame rate and
-  processing time. If it does not fit, the fallbacks in order are: process 30 of the 60
-  frames per second, move decoding to the RTX 5080, or move MarbleTrack to a second PC on
-  the same switch (vMix then has the main PC to itself).
+- **CPU, measured** (one core of a 2.8 GHz cloud Xeon, simulated frames with ten balls in view;
+  `scripts/benchmark.py` style):
+
+  | Camera | Processed at | Per frame | Cores at 60 fps | Cores at 30 fps |
+  |---|---|---|---|---|
+  | AIDA 1920×1080 | 739×416 | 12.9 ms | 0.77 | 0.39 |
+  | OBSBOT 3840×2160 | 1527×859 | 28.2 ms | 1.69 | 0.85 |
+  | All 13 AIDA + OBSBOT | | | ~11.7 | ~5.9 |
+
+  Fusion (ranking all balls) adds about 1.5 ms per batch of camera frames: negligible.
+  A Ryzen 9 9900X3D core is roughly 1.5–2× faster than this cloud core, so all cameras at 60 fps
+  should need about 6–8 of its 12 cores (est.), leaving the rest for NDI decoding and vMix.
+  This is feasible but tight; measure it on the venue PC (the live screen shows every camera's
+  frame rate and processing time). If it does not fit, in order: process 30 frames per second
+  instead of 60, move decoding to the RTX 5080, or run MarbleTrack on a second PC.
+  Shrinking frames by a non-whole factor used to cost more than the detection itself
+  (16 ms per 1080p frame); it is now done in two fast steps, which halved the per-frame cost
+  without changing detections (positions within 0.3 mm).
 
 ## 8. Routes and saved maps
 
