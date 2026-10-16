@@ -254,11 +254,12 @@ class FusionEngine:
             m.x[1] = max(m.x[1], 0.0)
         # Inside a place no camera sees, the marble is somewhere between floor and cap (it
         # cannot have left without being seen): its position variance is bounded by that
-        # interval however long it stays there. In view, a marble hidden behind others is
-        # not bounded this way.
+        # interval. In view, a marble hidden behind others is not bounded this way, and
+        # once lost (``lost_after``) the bound is lifted so the gate can widen again.
         bound = (0.5 * (cap - floor)) ** 2 + 0.01
         tol = self.coast_tolerance
-        if self._bound and m.P[0, 0] > bound and any(a - tol <= m.x[0] <= b + tol for a, b in self.blind_zones):
+        recent = m.last_obs_t is not None and t - m.last_obs_t <= self.lost_after
+        if self._bound and recent and m.P[0, 0] > bound and any(a - tol <= m.x[0] <= b + tol for a, b in self.blind_zones):
             k = np.sqrt(bound / m.P[0, 0])
             m.P[0, :] *= k
             m.P[:, 0] *= k
