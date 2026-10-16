@@ -135,6 +135,7 @@ function render() {
   $("#projectName").textContent = st.project.name;
   $("#projectName").title = st.project.name;
   $("#mapsBtn").hidden = live;
+  $("#demoAll").hidden = live || !st.demo;
   if (live) { renderLive(); return; }
   stopLive();
   if (S.step !== st.step) mountStep(st.step, S.step != null);
@@ -1095,6 +1096,10 @@ async function afterOpen() {
   try { await api("check_views", {}, { mutates: false }); } catch { /* toast shown */ }
 }
 $("#mapsBtn").onclick = openMaps;
+$("#demoAll").onclick = (e) => busy(e.currentTarget, "Setting up…", async () => {
+  const r = await api("demo_setup_all", {});
+  toast("ok", `${plural(r.demo_cameras, "demo camera")} set up: waypoints, empty track and colours. Review, then Go live.`);
+});
 $("#sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") closeMaps(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sheet").hidden) closeMaps(); });
 $("#importFile").onchange = async (e) => {

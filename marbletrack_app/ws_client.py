@@ -44,7 +44,7 @@ def _connect(url: str, token: str, timeout: float):
 
 def check_url(url: str) -> str | None:
     if not url:
-        return "Enter the server address."
+        return "Enter the server address, or turn off \"Stream to a server\" (step 6) if you only use vMix."
     if not (url.startswith("ws://") or url.startswith("wss://")):
         return "The address must start with ws:// or wss://"
     return None

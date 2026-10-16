@@ -787,6 +787,25 @@ class App:
         self.toast("ok", f"Copied {n} colour{'s' if n != 1 else ''}. Copied colours are a fallback: sampling on this camera is more reliable.")
         return self.state()
 
+    def demo_setup_all(self) -> dict:
+        """Demo only: everything an installer does, on every demo camera, in one go (for showing the app)."""
+        if not self.demo:
+            raise UserError("only with demo cameras (start with --demo)")
+        if not self.project.cameras:
+            self.discover_cameras()
+        cams = [c for c in self.project.active_cameras if c.backend == "demo"]
+        for c in cams:
+            self.autofill_markers(c.key)
+        self.capture_background([c.key for c in cams])
+        for c in cams:
+            self.autofill_colours(c.key)
+        with self.lock:
+            if not self.project.server.url.strip():
+                self.project.server.enabled = False  # nothing to stream to: do not block going live
+            self.step = "review"
+        self.save()
+        return {**self.state(), "demo_cameras": len(cams)}
+
     def autofill_colours(self, key: str) -> dict:
         """Demo cameras only: click every parked marble, as the operator would."""
         cam = self._cam(key)
