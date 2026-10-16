@@ -120,6 +120,7 @@ class FusionEngine:
         motion_gate: float = 25.0,
         color_gate: float = 50.0,
         color_margin: float = 20.0,
+        color_margin_tracked: float = 9.0,
         free_coast_time: float = 0.15,
         coast_tolerance: float = 0.05,
         tracking_timeout: float = 0.1,
@@ -151,6 +152,7 @@ class FusionEngine:
         self.motion_gate = motion_gate
         self.color_gate = color_gate
         self.color_margin = color_margin
+        self.color_margin_tracked = color_margin_tracked
         self.free_coast_time = free_coast_time
         self.coast_tolerance = coast_tolerance
         self.tracking_timeout = tracking_timeout
@@ -171,6 +173,7 @@ class FusionEngine:
         self.events: list[RaceEvent] = []
         self.now = 0.0
         self.max_back = max_back
+        self._unknown_cost = float(np.log(1.0 / self.r_floor))  # as a marble known to within ~1 m
         self.blind_zones = self._compute_blind_zones()
 
     # -- camera health -----------------------------------------------------
@@ -445,19 +448,27 @@ class FusionEngine:
         # place in the image, however wide the motion gate has grown while it was unseen.
         floor = [self._coast_floor(m) - self.max_back - max(0.0, m.last_obs_v) * max(0.0, m.last_obs_t - t)
                  if m.initialized and m.last_obs_s is not None else -np.inf for m in self.marbles]
+        known = [m.initialized and m.last_obs_t is not None and self.now - m.last_obs_t <= self.lost_after
+                 for m in self.marbles]
         for i, det in enumerate(detections):
             best_color = det.color_d2.min()
+            # A blob that clearly has the colour of a marble known to be elsewhere (seen within
+            # ``lost_after``) is that marble seen where it is not (another pass of the track at
+            # the same image place), not some other marble: only a close colour call may go to
+            # anyone else. Wider margins are for re-identifying a marble lost for a while.
+            jb = int(np.argmin(det.color_d2))
+            margin = self.color_margin_tracked if known[jb] else self.color_margin
             for j, m in enumerate(self.marbles):
                 if not active[j]:
                     continue
                 c_color = det.color_d2[j]
                 # Ratio test: never hand a detection to a marble whose colour fits
                 # much worse than the best match, however well the motion fits.
-                if c_color > self.color_gate or c_color > best_color + self.color_margin:
+                if c_color > self.color_gate or c_color > best_color + margin:
                     continue
                 if not m.initialized:
                     cand = self._cold_start_candidate(det)
-                    cost[i, j] = c_color
+                    cost[i, j] = c_color + self._unknown_cost
                     choice[i, j] = (cand.s, self._r(det, cand), det.sigma_s(cand) ** 2, self._bias(det, cand))
                     continue
                 best = None
@@ -468,10 +479,13 @@ class FusionEngine:
                     _, y, S = self._innovation(m, t, cand.s, r)
                     md = y**2 / S
                     if best is None or md < best[0]:
-                        best = (md, cand.s, r, det.sigma_s(cand) ** 2, self._bias(det, cand))
+                        best = (md, cand.s, r, det.sigma_s(cand) ** 2, self._bias(det, cand), S)
                 if best is not None and best[0] <= self.motion_gate:
-                    cost[i, j] = c_color + best[0]
-                    choice[i, j] = best[1:]
+                    # Negative log-likelihood, not just the Mahalanobis distance: a marble
+                    # unseen for a while has a wide gate that fits almost anything cheaply;
+                    # the log-variance term makes a confidently tracked marble win the blob.
+                    cost[i, j] = c_color + best[0] + np.log(best[5] / self.r_floor)
+                    choice[i, j] = best[1:5]
         rows, cols = linear_sum_assignment(cost)
         for i, j in zip(rows, cols):
             if cost[i, j] < _INF:

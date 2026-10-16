@@ -280,17 +280,20 @@ class ColorDetector:
 
         n_cls = len(self.palette)
         key = comp[ys, xs].astype(np.int64) * n_cls + cls
-        groups, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
+        keys, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
         dets = []
-        inside = np.bincount(inverse, weights=(self.calib.track_mask[ys, xs] > 0).astype(float), minlength=len(groups))
+        inside = np.bincount(inverse, weights=(self.calib.track_mask[ys, xs] > 0).astype(float), minlength=len(keys))
+        groups = []  # [component, selection, centroid]
         for g in np.flatnonzero(counts >= self.min_area):
             if inside[g] < self.min_inside * counts[g]:
                 continue  # cut by the section edge or belongs to neighbouring track
             sel = self._contiguous(xs, ys, inverse == g)
-            n_px = int(sel.sum())
-            if n_px < self.min_area:
+            if sel.sum() < self.min_area:
                 continue
-            xy = np.array([xs[sel].mean(), ys[sel].mean()])
+            groups.append([int(keys[g] // n_cls), sel, np.array([xs[sel].mean(), ys[sel].mean()])])
+        groups = self._merge_fragments(groups, xs, ys)
+        for _, sel, xy in groups:
+            n_px = int(sel.sum())
             cands = [c for c in self.calib.centerline.project(xy, self.calib.max_lateral_px)
                      if self._inside_coverage(c) and c.dist <= self.calib.lateral_limit(c.s)]
             if not cands:
@@ -316,6 +319,35 @@ class ColorDetector:
                 )
             )
         return dets
+
+    def _merge_fragments(self, groups, xs, ys):
+        """One marble split into two colour classes is still one marble.
+
+        Shading, a number disc, a stripe or (at low resolution) chroma blur can make
+        part of a marble match a neighbouring colour better: a fragment within about
+        a radius of the bigger piece, the two together no bigger than one marble.
+        Two touching marbles of different colours are about a diameter apart and
+        twice the area. A merged fragment never becomes a detection of its own.
+        """
+        if len(groups) < 2:
+            return groups
+        groups = sorted(groups, key=lambda g: -int(g[1].sum()))
+        kept = []
+        for comp, sel, xy in groups:
+            for k in kept:
+                if k[0] != comp:
+                    continue
+                cands = self.calib.centerline.project(k[2], self.calib.max_lateral_px)
+                area = self.calib.expected_area(cands[0].s) if cands else np.pi * self.calib.marble_radius_px**2
+                close = np.linalg.norm(xy - k[2]) < 1.5 * np.sqrt(area / np.pi)
+                if close and int(k[1].sum()) + int(sel.sum()) < 1.4 * area:
+                    k[1] = k[1] | sel
+                    break
+            else:
+                kept.append([comp, sel, xy])
+        for k in kept:  # centroid of the whole marble
+            k[2] = np.array([xs[k[1]].mean(), ys[k[1]].mean()])
+        return kept
 
     @staticmethod
     def _contiguous(xs, ys, sel):
