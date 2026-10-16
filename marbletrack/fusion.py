@@ -112,6 +112,7 @@ class FusionEngine:
     # Switches for ablation studies (scripts compare the tracker with and without them).
     _nll = True  # association cost includes the log of the innovation variance
     _bound = True  # position variance bounded inside places no camera sees
+    _cascade = True  # marbles seen recently are matched before hidden or lost ones
 
     def __init__(
         self,
@@ -506,7 +507,26 @@ class FusionEngine:
                     # the log-variance term makes a confidently tracked marble win the blob.
                     cost[i, j] = c_color + best[0] + (np.log(best[5] / self.r_floor) if self._nll else 0.0)
                     choice[i, j] = best[1:5]
-        rows, cols = linear_sum_assignment(cost)
+        if self._cascade:
+            # Matching cascade (DeepSORT): marbles seen in the last few frames claim their blobs
+            # first; marbles hidden or lost only compete for what is left. A lost marble's wide
+            # gate then cannot take a blob from one that is being followed.
+            recent = np.array([m.initialized and m.last_obs_t is not None and self.now - m.last_obs_t <= self.tracking_timeout
+                               for m in self.marbles])
+            pairs = []
+            sub = np.where(recent[None, :], cost, _INF)
+            r1, c1 = linear_sum_assignment(sub)
+            pairs += [(i, j) for i, j in zip(r1, c1) if sub[i, j] < _INF]
+            used_d, used_m = {i for i, _ in pairs}, {j for _, j in pairs}
+            rest = cost.copy()
+            rest[list(used_d), :] = _INF
+            rest[:, list(used_m)] = _INF
+            rest[:, recent] = _INF
+            r2, c2 = linear_sum_assignment(rest)
+            pairs += [(i, j) for i, j in zip(r2, c2) if rest[i, j] < _INF]
+            rows, cols = [p[0] for p in pairs], [p[1] for p in pairs]
+        else:
+            rows, cols = linear_sum_assignment(cost)
         for i, j in zip(rows, cols):
             if cost[i, j] < _INF:
                 self._update(self.marbles[j], td[i], *choice[i, j], cam_id=cam_id)

@@ -99,6 +99,7 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
         next_preview = 0.0
         n, busy, stat_t = 0, 0.0, time.perf_counter()
         rack = spec.get("rack")  # finish-rack camera: read the slots instead of tracking
+        harvest = harvester = None  # single-marble runs: save labelled crops for training
         next_rack = 0.0
         while not stop_evt.is_set():
             try:
@@ -106,6 +107,15 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
                     cmd = cmd_q.get_nowait()
                     if cmd[0] == "preview":
                         preview_every, preview_w = 1.0 / max(0.5, cmd[1]), int(cmd[2])
+                    elif cmd[0] == "harvest":
+                        harvest = cmd[1]  # None, or {"label": marble id or "empty", "folder": ...}
+                        if harvest:
+                            from .training import CropWriter
+
+                            harvester = CropWriter(harvest["folder"], key, calib.background, det)
+                        elif harvester is not None:
+                            out_q.put(("harvested", key, harvester.close()))
+                            harvester = None
             except queue.Empty:
                 pass
             frame, t_cap = src.read()
@@ -128,6 +138,8 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
             else:
                 dets = det.detect(frame, t)
                 out_q.put(("det", key, t, dets))
+                if harvester is not None and dets:
+                    harvester.add(frame, t, dets, harvest["label"])
             busy += time.perf_counter() - start
             n += 1
             if t >= next_preview:
@@ -151,6 +163,11 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
     except Exception as e:
         out_q.put(("error", key, f"{e}", traceback.format_exc()))
     finally:
+        if harvester is not None:
+            try:
+                out_q.put(("harvested", key, harvester.close()))
+            except Exception:
+                pass
         if src is not None:
             try:
                 src.close()
@@ -231,6 +248,7 @@ class Runtime:
         self.history: deque = deque(maxlen=20)
         self._publish_every = 1.0 / max(1.0, project.server.publish_hz)
         self._next_pub = 0.0
+        self.harvesting: str | None = None
         self.frozen = False  # operator: hold the board on air as it is
         self.hidden = False  # operator: take the board off air
 
@@ -278,6 +296,15 @@ class Runtime:
                 return
             if msg[0] == "recorded":
                 self._handle(msg, self.now())
+
+    def harvest(self, label: str | None, folder=None):
+        """Single-marble runs: every camera saves crops of what it detects, labelled ``label``
+        (a marble id while only that marble rolls; "empty" for runs with no marble, whose
+        detections are all false). ``None`` stops."""
+        self.harvesting = label
+        for q in self.cmd_qs.values():
+            q.put(("harvest", {"label": label, "folder": str(folder)} if label else None))
+        self._event("harvest", {"label": label})
 
     def set_preview(self, key: str | None, focus_fps=12.0, focus_w=960, grid_fps=4.0, grid_w=400):
         for k, q in self.cmd_qs.items():
@@ -422,6 +449,8 @@ class Runtime:
                 self._check_rack(self.race)
         elif kind == "stats":
             st.update(msg[2])
+        elif kind == "harvested":
+            st["harvested"] = msg[2]
         elif kind == "recorded":
             st["recorded"] = msg[2]
             self._event("camera_recorded", {"camera": key, "name": st["name"], **msg[2]})
@@ -515,6 +544,6 @@ class Runtime:
             return {"race": {"id": race.id, "state": race.state, "clock": self.clock(race, self.now()), "late": race.late,
                              "confirmed": race.confirmed, "manual": bool(race.manual_order)},
                     "frozen": self.frozen, "hidden": self.hidden,
-                    "rack": {k: v["slots"] for k, v in self.rack.items()},
+                    "rack": {k: v["slots"] for k, v in self.rack.items()}, "harvesting": self.harvesting,
                     "board": self.board, "cameras": self.cam_state, "log": list(self.log)[:60],
                     "history": list(self.history)[:5]}

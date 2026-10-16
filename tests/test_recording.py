@@ -33,14 +33,17 @@ def test_live_session_is_recorded_and_replays_like_live():
         if all(c.get("fps", 0) > 0 or c["error"] for c in app.live_status()["cameras"].values()):
             break
         time.sleep(0.5)
+    ids = [m.id for m in app.project.marbles]
+    app.live_harvest(ids[0])  # training crops (the demo has every marble on the track: only the mechanism is tested)
     time.sleep(6)
     # race control: a correction and a confirmation go into the session's event log
-    ids = [m.id for m in app.project.marbles]
     app.live_operator("swap", a=ids[0], b=ids[1])
     app.live_operator("freeze", on=True)
     app.live_operator("freeze", on=False)
     app.live_operator("confirm", confirmed=True)
     time.sleep(2)
+    app.live_harvest(None)
+    time.sleep(1)
     session = app.runtime.record_dir
     app.stop_live()
     app.shutdown()
@@ -54,10 +57,16 @@ def test_live_session_is_recorded_and_replays_like_live():
         assert caps == sorted(caps)
     live = read_jsonl(session / "boards.jsonl")
     assert len(live) > 20
+    crops = list((app._project_folder() / "training" / ids[0]).glob("*.png"))
+    assert len(crops) >= 5
+    import cv2
+
+    assert cv2.imread(str(crops[0])).shape == (64, 128, 3)  # frame crop | empty-track crop
     events = read_jsonl(session / "events.jsonl")
     assert any(e["kind"] == "camera_recorded" for e in events)
     ops = [e["action"] for e in events if e["kind"] == "operator"]
     assert ops == ["swap", "freeze", "freeze", "confirm"]
+    assert [e["label"] for e in events if e["kind"] == "harvest"] == [ids[0], None]
     assert live[-1]["result"] == "confirmed"
 
     res = replay(session, workers=3)

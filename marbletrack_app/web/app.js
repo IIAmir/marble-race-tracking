@@ -831,7 +831,11 @@ function renderLive() {
             <button class="btn sm ghost" id="freeze" title="Keep the board on air exactly as it is now">Freeze board</button>
             <button class="btn sm ghost" id="hideb" title="Take the board off air (vMix fields emptied)">Hide board</button>
           </div>
-          <small class="hint">Click a marble to swap it with another or to move it in the result. Every correction is logged.</small></div>
+          <small class="hint">Click a marble to swap it with another or to move it in the result. Every correction is logged.</small>
+          <details class="more"><summary>${I.chev}Training data</summary><div class="stack">
+            <small class="hint">Roll <b>one marble alone</b> through the course: every camera saves what it detects, labelled with that marble (real light, blur and shadows). A run with no marble at all collects what must be rejected.</small>
+            <div class="row"><select class="input" id="hlabel" style="flex:1">${S.st.project.marbles.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} alone</option>`).join("")}<option value="empty">No marble (empty track)</option></select>
+            <button class="btn sm" id="harvest">Start</button></div><span class="hint" id="hstate"></span></div></details></div>
           <div class="rows" id="rows"></div></aside>
       <div class="status-bar">
         <div class="sbox"><span class="k">Cameras</span><span class="v" id="camsum"></span><span class="d" id="camdet"></span></div>
@@ -843,6 +847,7 @@ function renderLive() {
     $("#newrace").onclick = (e) => busy(e.currentTarget, "…", () => api("new_race", {}, { mutates: false }));
     const op = (action, args = {}) => api("live_operator", { action, ...args }, { mutates: false });
     $("#confirmres").onclick = () => op("confirm", { confirmed: !S.live?.race?.confirmed });
+    $("#harvest").onclick = () => api("live_harvest", { label: S.live?.harvesting ? null : $("#hlabel").value }, { mutates: false });
     $("#freeze").onclick = () => op("freeze", { on: !S.live?.frozen });
     $("#hideb").onclick = () => op("hide", { on: !S.live?.hidden });
     $("#rows").onclick = (e) => {
@@ -899,6 +904,13 @@ function paintLive(d) {
   rs.title = r.late ? "Tracking started after this race had begun: the clock and finish times are estimates." : "";
   if (r.late) rs.textContent += " · joined late";
   $("#clock").textContent = r.clock == null ? "0.000" : r.clock.toFixed(3);
+  const hv = $("#harvest");
+  if (hv) {
+    hv.textContent = d.harvesting ? "Stop" : "Start";
+    hv.classList.toggle("danger", !!d.harvesting);
+    const n = Object.values(d.cameras || {}).reduce((a, c) => a + Object.values(c.harvested || {}).reduce((x, y) => x + y, 0), 0);
+    $("#hstate").textContent = d.harvesting ? `Saving crops of ${d.harvesting === "empty" ? "the empty track" : S.st.project.marbles.find((m) => m.id === d.harvesting)?.name || d.harvesting}…` : n ? `${n} crops saved in the map's training folder` : "";
+  }
   const cr = $("#confirmres");
   if (cr) {
     cr.disabled = r.state !== "complete";

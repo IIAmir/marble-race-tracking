@@ -972,6 +972,16 @@ class App:
                     "operator", "rack_check", "finish_estimated"):
             s.publish_event(kind, {k: v for k, v in data.items()})
 
+    def live_harvest(self, label: str | None = None) -> dict:
+        """Start (label = a marble id, or "empty") or stop (None) saving training crops."""
+        rt = self.runtime
+        if rt is None:
+            raise UserError("not live")
+        if label is not None and label != "empty" and label not in {m.id for m in self.project.marbles}:
+            raise UserError("unknown marble")
+        rt.harvest(label, self._project_folder() / "training")
+        return {"harvesting": label}
+
     def live_operator(self, action: str, **args) -> dict:
         rt = self.runtime
         if rt is None:

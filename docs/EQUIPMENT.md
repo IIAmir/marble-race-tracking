@@ -266,9 +266,40 @@ patterns (`P{n}Name.Text`) and can be changed to match an existing title.
 | Maps: list, open, new route, copy, export/import; camera-view check and waypoint carry-over | `marbletrack_app/maps.py`, *Maps* button, Review step |
 | Tests: view check (same / moved / different, light change), zip safety, reopening a map | `tests/test_maps.py` |
 | Lap races and cameras that see several stretches (both legs of a hairpin) | `fusion.py`, `calibration.py`, step 3 |
-| Shadows, wider channel sections, colour fragments, association by likelihood (found by the venue simulator, §12) | `detector.py`, `fusion.py`, step 1 |
+| Shadows, wider channel sections, colour fragments, association by likelihood, matching cascade (found by the venue simulator, see VENUE_SIMULATOR.md) | `detector.py`, `fusion.py`, step 1 |
+| Race recording, replay, gate labels and scoring on real races | `recording.py`, `replay.py`, `labels.py`, step 6 |
+| Rolling-shutter row timing; board compares marbles at one instant | `detector.py`, `fusion.py`, step 2 |
+| Race control: provisional result, identity swap, freeze/hide, manual order; finish-rack camera; estimated finishes | `engine.py`, `rack.py`, live screen |
+| Training crops from single-marble runs | `training.py`, live screen |
 
-## 11. Open questions
+## 11. Before race day: the venue checklist
+
+The simulator cannot certify the system; real races can. Research on comparable systems (sports
+tracking, electronic line calling, racing) points to the same order of work: fix the cameras,
+record real races, label them cheaply, measure, then go on air with a human in control.
+
+1. **Cameras to manual.** Shutter, gain, white balance and focus fixed on every camera, settings
+   written down. Shutter 1/1000 s or faster (at 3 m/s a 1/60 s shutter smears a 25 mm ball over
+   two diameters, which is what fragments its colour).
+2. **Light flicker.** Check every camera at the chosen shutter speed for rolling bands from the
+   LED fixtures; use flicker-free (constant-current) lights or a shutter that is a whole number of
+   mains half-cycles.
+3. **NDI bitrate at maximum.** NDI|HX sends colour at half resolution (4:2:0); a 25 px ball has
+   ~12 px of colour. Check what the AIDA actually sends.
+4. **Sensor readout** entered for every camera (step 2), so each marble is timed by its image row.
+5. **Finish.** The finish camera's waypoints reach past the line (step 7 warns otherwise); a
+   single-file run-out to the rack; a light board behind the rack slots; a rack camera (WINDOWS_APP.md,
+   *Live screen*).
+6. **Record 20+ real races on at least two routes** (step 6), plus single-marble runs for training
+   data. Keep one route aside, untouched, as the final test.
+7. **Label and score** with `marbletrack_app.labels` (gate orders + rack order). Suggested gates:
+   no wrong winner in the held-out races, exact final order ≥ 97 %, phantom overtakes ≤ 0.2 per
+   race, board order right ≥ 95 % of the time.
+8. **Shadow mode, then supervised air.** Run live with the board on a non-air vMix output while
+   someone notes every disagreement; then on air with the operator console (confirm result,
+   swap, freeze, hide) and the rack check.
+
+## 12. Open questions
 
 1. The replacement colour for the 9.
 2. Mounting height of the OBSBOT and how much of the layout it sees.

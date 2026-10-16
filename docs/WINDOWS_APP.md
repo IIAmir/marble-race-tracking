@@ -132,6 +132,56 @@ freely; **Go live** unlocks when every step is complete.
     nothing moving.
   - With *automatic new races*, marbles returning to the track after it was clear start a new
     race. *New race* does this at once.
+- **Corrections and the result.**
+  - A finished race goes out as **PROVISIONAL** (vMix status field, `result` in the stream) until
+    you press *Confirm result*, normally after looking at the finish rack.
+  - Click a marble on the board to swap it with the marble the tracker has mixed it up with
+    (positions, speeds and places move with the names), or to move it up or down in the result.
+  - *Freeze board* keeps the board on air exactly as it is; *Hide board* empties the vMix title.
+  - Every correction is written to the race-control log, sent to the stream as an `operator`
+    event and kept in the session recording.
+- **Finish-rack camera.** Give a camera the role *Watches the finish rack*; in step 3 click the
+  centre of every slot, the first finisher's slot first; in step 5 click each marble sitting in
+  the rack. While live it reads the rack about four times a second. When the race is complete,
+  the rack order is compared with the board: a difference or an unreadable slot is raised in
+  race control; agreement can confirm the result by itself (step 1, *More track settings*).
+  Two things make the rack reliable: a **single-file run-out** from the finish line to the rack
+  (otherwise the rack order is not the finishing order), and a **light board behind the slots**
+  (the black ball disappears against a dark one).
+- **Finish missed at the line.** A marble last seen heading for the line within 50 cm of it but
+  never seen past it gets an estimated finish time, marked for review. Step 7 warns when no
+  camera's waypoints reach 5 cm past the finish line, which is what causes this.
+- **Training data.** Under *Training data*, pick a marble, press *Start* and roll that marble
+  alone through the course: every camera saves crops of what it detects, labelled with that
+  marble, under the venue's real light, blur and compression. A run with no marble labels
+  everything the cameras pick up as "empty". Crops go to the map's `training` folder.
+
+## Recording and replaying races
+
+Step 6, *Record every camera while live*, saves a session folder per live session (in the map's
+`recordings` folder unless another is set): every frame of every camera (Motion-JPEG, with the
+capture and arrival time of each frame), the empty-track images and the map as they were, every
+leaderboard that went out and every event. About 0.5–1 GB per camera per minute.
+
+```
+python -m marbletrack_app.replay <session>                      # the tracker again, on the recorded frames
+python -m marbletrack_app.labels propose <session> --gates 1.5 4.0 7.2 --boards <session>/replay-*/boards.jsonl
+python -m marbletrack_app.labels score <session>                # the live boards against checked labels
+python -m marbletrack_app.labels score <session> --boards <session>/replay-*/boards.jsonl
+```
+
+The replay runs fresh detectors on the recorded frames and fuses them in the order they arrived
+live, so a change to the tracker can be measured on the same real races. Labels are the order
+in which the marbles pass a few gates on the route plus the rack order: *propose* writes the
+tracker's order at each gate and a picture strip of every crossing to check by eye; fix the
+order in `labels.json`, mark each gate `"checked": true`, put the rack order in `final_order`,
+and *score* reports exact gate orders, pairs in the wrong order, seconds a pair was shown the
+wrong way round, and whether the final board matched the rack.
+
+**Rolling shutter.** Most NDI cameras (the AIDA included) expose the rows of a frame one after
+another. With the camera's *Sensor readout* entered (step 2, under *Exposure & colour*; from the
+data sheet, or measured), each marble is timed by its own row, which removes up to ±2 cm of
+position error at 3 m/s.
 
 ## WebSocket protocol (`marbletrack.v1`)
 
@@ -173,9 +223,16 @@ The fields mean:
   - `finished`.
 - `finish_time`: seconds from the race start.
 - `clock_estimated`: true when tracking began after the race had started.
+- `result`: `provisional` until the operator (or the finish-rack check) confirms the race,
+  then `confirmed`; show the result as final only when it is `confirmed`.
+- `hidden`: the operator took the board off air.
+- `photo_finish`: also true for a finish estimated after the marble was missed at the line.
+- `manual` (per marble): the operator placed this marble in the result by hand.
 
 `race_event` (`event` is one of `race_started`, `finish`, `race_complete`, `new_race`,
-`camera_offline`, `camera_online`, `camera_error`):
+`camera_offline`, `camera_online`, `camera_error`, `operator` (a correction: `action` is `swap`,
+`set_order`, `confirm`, `freeze` or `hide`), `rack_check` (`status` `agrees`, `filling`, `differs`
+or `unreadable`, with `rack` and `board` orders) and `finish_estimated`):
 ```json
 {"schema":"marbletrack.v1","type":"race_event","event":"finish","station_id":"track-1","seq":413,"sent_at":"…",
  "race_id":"3f2a9c1b77de","marble_id":"ruby","name":"Ruby","rank":1,"time":12.4183}
