@@ -75,6 +75,9 @@ class CameraSetup:
     # Track waypoints: image points (native pixels) of distance marks, in race direction.
     markers: list[list[float]] = field(default_factory=list)
     marker_s: list[float] = field(default_factory=list)  # track distance (m) of each marker
+    # Marker indices that start a new stretch: a camera may see separate parts of the track
+    # (both legs of a hairpin, a bridge over a lower pass). Click stretches in race order.
+    breaks: list[int] = field(default_factory=list)
     width_scale: float = 1.0  # track band (mask) width relative to the width implied by the marks
     marble_radius_px: float = 0.0  # median measured during colour calibration (for display)
     radius_scale: float = 1.0  # measured marble size / size implied by the marks (perspective model)
@@ -84,6 +87,26 @@ class CameraSetup:
     @property
     def s_range(self) -> tuple[float, float] | None:
         return (self.marker_s[0], self.marker_s[-1]) if len(self.marker_s) >= 2 else None
+
+    @property
+    def stretches(self) -> list[tuple[int, int]]:
+        """(first, last) marker index of each stretch. A stretch also starts where the distance
+        jumps (a hidden part of the track was skipped), even without an explicit break."""
+        n = len(self.marker_s)
+        if n == 0:
+            return []
+        steps = np.diff(self.marker_s) if n > 1 else np.zeros(0)
+        typical = float(np.median(steps)) if len(steps) else 0.0
+        cuts = {i for i in self.breaks if 0 < i < n}
+        cuts |= {i + 1 for i, d in enumerate(steps) if d > max(0.6, 4 * typical)}
+        starts = [0] + sorted(cuts)
+        ends = [c - 1 for c in sorted(cuts)] + [n - 1]
+        return list(zip(starts, ends))
+
+    @property
+    def s_ranges(self) -> list[tuple[float, float]]:
+        """Track covered by this camera: one (lo, hi) per stretch of at least two waypoints."""
+        return [(self.marker_s[a], self.marker_s[b]) for a, b in self.stretches if b > a]
 
 
 @dataclass
@@ -109,6 +132,7 @@ class VmixSetup:
     color_field: str = ""  # e.g. "P{n}Color.Fill.Color" for a colour swatch shape; empty = not used
     clock_field: str = "Clock.Text"
     status_field: str = "Status.Text"  # READY / LIVE / FINAL
+    lap_field: str = ""  # e.g. "Lap.Text": the leader's lap, "LAP 2/3" (lap races only); empty = not used
 
 
 @dataclass
@@ -116,7 +140,8 @@ class Project:
     name: str = "My marble race"  # the map's name: one project per route
     notes: str = ""  # free text, e.g. which draw / route this map is for
     saved_at: str = ""  # UTC, set on every save
-    track_length: float = 0.0  # metres, start gate to end of run-out
+    track_length: float = 0.0  # metres, start gate to end of run-out (a circuit: one lap, start line to start line)
+    laps: int = 1  # more than one: the track is a circuit and the race runs this many laps
     finish_s: float = 0.0  # metres from the start gate to the finish line
     start_s: float = 0.1  # race clock starts when the first marble passes this distance
     blind_zones: list[list[float]] = field(default_factory=list)  # tunnels etc. [[a, b], ...]
@@ -153,9 +178,9 @@ class Project:
         s = np.arange(0.0, L + step / 2, step)
         seen = np.zeros(len(s), bool)
         for c in self.active_cameras:
-            if c.role == "section" and c.s_range:
-                lo, hi = c.s_range
-                seen |= (s >= lo) & (s <= hi)
+            if c.role in ("section", "overhead"):
+                for lo, hi in c.s_ranges:
+                    seen |= (s >= lo) & (s <= hi)
         gaps, start = [], None
         for x, ok in zip(s, seen):
             if not ok and start is None:

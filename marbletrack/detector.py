@@ -37,6 +37,11 @@ class CameraCalibration:
     def s_range(self) -> tuple[float, float]:
         return self.centerline.s_range
 
+    @property
+    def pieces(self) -> list[tuple[float, float]]:
+        """Separate stretches of track this camera sees (one, unless it sees e.g. both legs of a hairpin)."""
+        return self.centerline.pieces
+
 
 @dataclass
 class Detection:
@@ -83,7 +88,7 @@ def scale_calibration(calib: CameraCalibration, k: float) -> CameraCalibration:
     w, h = calib.track_mask.shape[::-1]
     size = (max(1, round(w * k)), max(1, round(h * k)))
     cl = calib.centerline
-    line = Polyline(cl.points * k, cl.s, None if cl.normals is None else cl.normals * k)
+    line = Polyline(cl.points * k, cl.s, None if cl.normals is None else cl.normals * k, cl.gaps)
     return replace(
         calib,
         centerline=line,
@@ -162,9 +167,8 @@ class ColorDetector:
         # A blob within one radius of the end of this camera's section is cut off
         # by the mask and its centroid is biased; the neighbouring camera (overlap)
         # sees it whole.
-        lo, hi = self.calib.s_range
         r = np.sqrt(self.calib.expected_area(c.s) / np.pi) * c.s_per_unit
-        return lo + r <= c.s <= hi - r
+        return any(lo + r <= c.s <= hi - r for lo, hi in self.calib.pieces)
 
     def _measure_gain(self, frame: np.ndarray) -> np.ndarray:
         """Per-channel illumination ratio frame/background (median over track pixels).

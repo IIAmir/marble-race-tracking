@@ -57,19 +57,31 @@ def _catmull_rom(p: np.ndarray, sub: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def centerline(cam: CameraSetup, sub: int = 8) -> Polyline:
-    """Image centerline through the waypoints.
+    """Image centerline through the waypoints, one smooth curve per stretch.
 
     A smooth curve (centripetal Catmull-Rom) follows bends between marks, where
     straight chords would cut corners; each dense vertex gets its distance by
-    interpolating the marks' distances.
+    interpolating the marks' distances. Separate stretches seen by one camera
+    are joined by a gap segment that never matches anything.
     """
     if len(cam.markers) < 2:
         raise CalibrationError(f"{cam.name}: place at least two waypoints along the track")
     s = np.asarray(cam.marker_s, float)
     if np.any(np.diff(s) <= 0):
         raise CalibrationError(f"{cam.name}: waypoint distances must increase in race direction")
-    pts, u = _catmull_rom(np.asarray(cam.markers, float), sub)
-    return Polyline(pts, _projective_s(pts, u, s))
+    marks = np.asarray(cam.markers, float)
+    pts_all, s_all, gaps = [], [], []
+    for a, b in cam.stretches:
+        if b == a:
+            raise CalibrationError(f"{cam.name}: every stretch needs at least two waypoints (the one at {s[a]:g} m is alone)")
+        pts, u = _catmull_rom(marks[a:b + 1], sub)
+        ss = _projective_s(pts, u, s[a:b + 1])
+        if pts_all:
+            gaps[-1:] = [True]
+        pts_all.append(pts)
+        s_all.append(ss)
+        gaps += [False] * (len(pts) - 1) + [False]
+    return Polyline(np.vstack(pts_all), np.concatenate(s_all), gaps=np.array(gaps[:-1], bool))
 
 
 def _mobius(l3, s3):
@@ -130,13 +142,17 @@ def _projective_s(pts: np.ndarray, u: np.ndarray, s_mark: np.ndarray) -> np.ndar
 
 
 def px_per_metre(cam: CameraSetup) -> np.ndarray:
-    """Local image scale at each waypoint (pixels per metre along the track)."""
+    """Local image scale at each waypoint (pixels per metre along the track), within its stretch."""
     p = np.asarray(cam.markers, float)
     s = np.asarray(cam.marker_s, float)
-    seg = np.linalg.norm(np.diff(p, axis=0), axis=1) / np.maximum(np.diff(s), 1e-6)
-    if len(seg) == 1:
-        return np.r_[seg, seg]
-    return np.r_[seg[0], (seg[:-1] + seg[1:]) / 2, seg[-1]]
+    out = np.zeros(len(p))
+    for a, b in cam.stretches:
+        if b == a:
+            out[a] = out[a - 1] if a > 0 else 1.0
+            continue
+        seg = np.linalg.norm(np.diff(p[a:b + 1], axis=0), axis=1) / np.maximum(np.diff(s[a:b + 1]), 1e-6)
+        out[a:b + 1] = np.r_[seg, seg] if len(seg) == 1 else np.r_[seg[0], (seg[:-1] + seg[1:]) / 2, seg[-1]]
+    return out
 
 
 def band_halfwidth_px(cam: CameraSetup, project: Project) -> np.ndarray:
@@ -148,16 +164,21 @@ def band_halfwidth_px(cam: CameraSetup, project: Project) -> np.ndarray:
 def track_mask(cam: CameraSetup, project: Project, size: tuple[int, int]) -> np.ndarray:
     w, h = size
     mask = np.zeros((h, w), np.uint8)
-    p, u = _catmull_rom(np.asarray(cam.markers, float), 6)
-    hw = np.interp(u, np.arange(len(cam.markers)), band_halfwidth_px(cam, project))
-    for i in range(len(p) - 1):
-        a, b = p[i], p[i + 1]
-        d = b - a
-        n = np.array([-d[1], d[0]]) / max(np.linalg.norm(d), 1e-9)
-        poly = np.array([a + n * hw[i], b + n * hw[i + 1], b - n * hw[i + 1], a - n * hw[i]])
-        cv2.fillConvexPoly(mask, np.round(poly).astype(np.int32), 255, cv2.LINE_8)
-    for (x, y), r in zip(p, hw):
-        cv2.circle(mask, (int(round(x)), int(round(y))), int(round(r)), 255, -1)
+    marks = np.asarray(cam.markers, float)
+    band = band_halfwidth_px(cam, project)
+    for s0, s1 in cam.stretches:
+        if s1 == s0:
+            continue
+        p, u = _catmull_rom(marks[s0:s1 + 1], 6)
+        hw = np.interp(u, np.arange(s1 - s0 + 1), band[s0:s1 + 1])
+        for i in range(len(p) - 1):
+            a, b = p[i], p[i + 1]
+            d = b - a
+            n = np.array([-d[1], d[0]]) / max(np.linalg.norm(d), 1e-9)
+            poly = np.array([a + n * hw[i], b + n * hw[i + 1], b - n * hw[i + 1], a - n * hw[i]])
+            cv2.fillConvexPoly(mask, np.round(poly).astype(np.int32), 255, cv2.LINE_8)
+        for (x, y), r in zip(p, hw):
+            cv2.circle(mask, (int(round(x)), int(round(y))), int(round(r)), 255, -1)
     return mask
 
 

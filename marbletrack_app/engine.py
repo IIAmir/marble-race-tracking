@@ -146,7 +146,10 @@ class RaceSession:
         self.project = project
         ids = [m.id for m in project.marbles]
         blind = [tuple(z) for z in project.blind_zones]
-        self.engine = FusionEngine(ids, project.finish_s, project.track_length, cameras=cameras,
+        laps = max(1, int(project.laps))
+        lap = project.track_length if laps > 1 else None
+        self.engine = FusionEngine(ids, (laps - 1) * project.track_length + project.finish_s, project.track_length,
+                                   cameras=cameras, laps=laps, lap_length=lap,
                                    static_blind_zones=blind, rank_margin=project.marble_diameter_mm / 2000.0,
                                    photo_finish_s=0.0005 if has_finish_cam else 0.006)
         self.t0: float | None = None  # race clock origin (app time)
@@ -184,7 +187,7 @@ class Runtime:
         self.lock = threading.RLock()
         self.t0 = time.perf_counter()
         self.has_finish = any(c.role == "finish" for c in project.active_cameras)
-        self.cameras_s = {c.key: c.s_range for c in project.active_cameras}
+        self.cameras_s = {c.key: c.s_ranges for c in project.active_cameras}
         self.race = RaceSession(project, self.cameras_s, self.has_finish)
         self.log: deque = deque(maxlen=200)
         self.board: list = []

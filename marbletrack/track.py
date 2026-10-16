@@ -39,10 +39,13 @@ class Polyline:
     in metres.
     """
 
-    def __init__(self, points, s, normals=None):
+    def __init__(self, points, s, normals=None, gaps=None):
         self.points = np.asarray(points, dtype=float)
         self.s = np.asarray(s, dtype=float)
         self.normals = None if normals is None else np.asarray(normals, dtype=float)
+        # ``gaps[k]`` is True where segment k only joins two separate stretches of track seen by
+        # one camera (e.g. both legs of a hairpin): nothing on it is ever projected.
+        self.gaps = np.zeros(max(0, len(self.s) - 1), bool) if gaps is None else np.asarray(gaps, bool)
         if len(self.points) < 2 or len(self.points) != len(self.s):
             raise ValueError("need >= 2 vertices with one s value each")
         if np.any(np.diff(self.s) <= 0):
@@ -87,7 +90,7 @@ class Polyline:
         det = np.where(ok, det, 1.0)
         t = (d[:, 0] * n[:, 1] - d[:, 1] * n[:, 0]) / det
         u = (self._ab[:, 0] * d[:, 1] - self._ab[:, 1] * d[:, 0]) / det
-        inside = ok & (t >= -0.02) & (t <= 1.02) & (np.abs(u) <= max_dist)
+        inside = ok & (t >= -0.02) & (t <= 1.02) & (np.abs(u) <= max_dist) & ~self.gaps
         idx = np.flatnonzero(inside)
         out = []
         for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1) if idx.size else []:
@@ -97,6 +100,14 @@ class Polyline:
             out.append(Projection(s=float(self.s[k] + tk * ds), dist=float(abs(u[k])),
                                   s_per_unit=float(ds / self._seglen[k])))
         return sorted(out, key=lambda c: c.dist)
+
+    @property
+    def pieces(self) -> list[tuple[float, float]]:
+        """The separate stretches of track this polyline covers, as (s_lo, s_hi)."""
+        cut = np.flatnonzero(self.gaps)
+        starts = np.r_[0, cut + 1]
+        ends = np.r_[cut, len(self.s) - 1]
+        return [(float(self.s[a]), float(self.s[b])) for a, b in zip(starts, ends) if b > a]
 
     def section(self, s_lo: float, s_hi: float) -> "Polyline":
         """Sub-polyline covering ``[s_lo, s_hi]`` (endpoints interpolated)."""
@@ -122,6 +133,7 @@ class Polyline:
         t = np.clip(((p - self._a) * self._ab).sum(axis=1) / self._len2, 0.0, 1.0)
         closest = self._a + t[:, None] * self._ab
         d = np.linalg.norm(p - closest, axis=1)
+        d[self.gaps] = np.inf
         idx = np.flatnonzero(d <= max_dist)
         if idx.size == 0:
             return []

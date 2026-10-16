@@ -294,6 +294,8 @@ class App:
                 d["palette_issues"] = C.palette_issues(c, p) if c.palette else []
                 d["problems"] = C.camera_problems(c, p, c.key in self.backgrounds) if c.enabled else []
                 d["s_range"] = c.s_range
+                d["stretches"] = c.stretches
+                d["s_ranges"] = c.s_ranges
                 v = self.view_check.get(c.key)
                 d["view"] = None if v is None else {k: v.get(k) for k in ("status", "detail", "shift_px")}
                 if len(c.markers) >= 2:
@@ -324,6 +326,8 @@ class App:
         race = []
         if p.track_length <= 0:
             race.append("Enter the track length.")
+        if p.laps < 1:
+            race.append("The race needs at least one lap.")
         if not (0 < p.finish_s <= p.track_length):
             race.append("The finish line must be between the start and the end of the track.")
         if len(p.marbles) < 2:
@@ -384,7 +388,7 @@ class App:
 
     # ------------------------------------------------------------------ step 1: race
     def update_race(self, **fields) -> dict:
-        allowed = {"name", "notes", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
+        allowed = {"name", "notes", "laps", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
                    "marble_diameter_mm", "auto_new_race", "blind_zones"}
         with self.lock:
             for k, v in fields.items():
@@ -398,6 +402,8 @@ class App:
                     v = str(v).strip()[:80] or "My marble race"
                 if k == "notes":
                     v = str(v)[:2000]
+                if k == "laps":
+                    v = int(np.clip(int(v), 1, 99))
                 if k == "blind_zones":
                     v = [[float(a), float(b)] for a, b in v if float(b) > float(a)]
                 setattr(self.project, k, v)
@@ -588,15 +594,31 @@ class App:
     def undo_marker(self, key: str) -> dict:
         with self.lock:
             cam = self._cam(key)
-            if cam.markers:
+            if cam.breaks and cam.breaks[-1] >= len(cam.markers):
+                cam.breaks.pop()  # undo a "new stretch" that has no waypoint yet
+            elif cam.markers:
                 cam.markers.pop()
                 cam.marker_s = cam.marker_s[:len(cam.markers)]
+                cam.breaks = [b for b in cam.breaks if b < len(cam.markers)]
+        return self.state()
+
+    def new_stretch(self, key: str) -> dict:
+        """The next waypoint starts another stretch of track this camera also sees
+        (the other leg of a hairpin, a lower pass under a bridge). Set its distance."""
+        with self.lock:
+            cam = self._cam(key)
+            if len(cam.markers) < 2:
+                raise UserError("place at least two waypoints on the first stretch first")
+            if cam.markers and (not cam.breaks or cam.breaks[-1] < len(cam.markers)):
+                if cam.breaks and len(cam.markers) - cam.breaks[-1] < 2:
+                    raise UserError("the current stretch needs at least two waypoints")
+                cam.breaks.append(len(cam.markers))
         return self.state()
 
     def clear_markers(self, key: str) -> dict:
         with self.lock:
             cam = self._cam(key)
-            cam.markers, cam.marker_s = [], []
+            cam.markers, cam.marker_s, cam.breaks = [], [], []
             if self.view_check.get(cam.key, {}).get("status") in ("changed", "size", "moved"):
                 self.view_check[cam.key] = {"status": "redo", "detail": "redo its waypoints, then capture the empty track", "shift_px": None, "H": None}
         return self.state()
@@ -817,7 +839,7 @@ class App:
                     v.port = int(np.clip(int(val), 1, 65535))
                 elif k == "rows":
                     v.rows = int(np.clip(int(val), 0, 64))
-                elif k in ("host", "input", "name_field", "info_field", "color_field", "clock_field", "status_field"):
+                elif k in ("host", "input", "name_field", "info_field", "color_field", "clock_field", "status_field", "lap_field"):
                     val = str(val).strip()[:120]
                     if k.endswith("_field") and val and "{n}" not in val and k in ("name_field", "info_field", "color_field"):
                         raise UserError("Row fields need {n} where the row number goes, e.g. P{n}Name.Text")
@@ -851,12 +873,12 @@ class App:
             srv = self.project.server
             if srv.enabled:
                 self.streamer = LeaderboardStreamer(srv.url, srv.token, srv.station_id, __version__,
-                                                    {"project": self.project.name, "track_length": self.project.track_length,
+                                                    {"project": self.project.name, "track_length": self.project.track_length, "laps": self.project.laps,
                                                      "finish_s": self.project.finish_s,
                                                      "marbles": [m.__dict__ for m in self.project.marbles],
                                                      "cameras": [{"key": c.key, "name": c.name, "role": c.role} for c in self.project.active_cameras]}).start()
             if self.project.vmix.enabled:
-                self.vmix = vmix.VmixClient(self.project.vmix).start()
+                self.vmix = vmix.VmixClient(self.project.vmix, laps=self.project.laps).start()
             self.runtime = rt
             self.mode = "live"
             rt.start()

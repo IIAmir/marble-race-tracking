@@ -28,7 +28,7 @@ def _fmt_time(t: float | None) -> str:
     return f"{int(m)}:{s:06.3f}" if m >= 1 else f"{s:.3f}"
 
 
-def board_fields(cfg, board: list, clock, state: str) -> dict[str, tuple[str, str]]:
+def board_fields(cfg, board: list, clock, state: str, laps: int = 1) -> dict[str, tuple[str, str]]:
     """Title fields for one leaderboard: ``{field: (function, value)}``.
 
     ``Info`` is the finish time for finished marbles, the gap to the leader in
@@ -60,6 +60,10 @@ def board_fields(cfg, board: list, clock, state: str) -> dict[str, tuple[str, st
         out[cfg.clock_field] = ("SetText", _fmt_time(clock) if clock is not None else "")
     if cfg.status_field:
         out[cfg.status_field] = ("SetText", {"waiting": "READY", "running": "LIVE", "complete": "FINAL"}.get(state, state.upper()))
+    if getattr(cfg, "lap_field", ""):
+        racing = [e for e in board if e.get("finish_time") is None and e.get("status") != "unseen"]
+        lap = max([e.get("lap", 1) for e in racing], default=laps if state == "complete" else 1)
+        out[cfg.lap_field] = ("SetText", "" if laps <= 1 else ("FINAL LAP" if lap >= laps else f"LAP {lap}/{laps}"))
     return out
 
 
@@ -71,8 +75,9 @@ def command(function: str, input_: str, field: str, value: str) -> bytes:
 class VmixClient:
     """Background TCP client: reconnects, sends only changed fields, newest board wins."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, laps: int = 1):
         self.cfg = cfg
+        self.laps = laps
         self._want: dict[str, tuple[str, str]] = {}
         self._sent: dict[str, tuple[str, str]] = {}
         self._lock = threading.Lock()
@@ -94,7 +99,7 @@ class VmixClient:
         self.thread.join(timeout=3)
 
     def publish_board(self, board: list, clock, state: str):
-        fields = board_fields(self.cfg, board, clock, state)
+        fields = board_fields(self.cfg, board, clock, state, self.laps)
         with self._lock:
             self._want.update(fields)
         self._wake.set()

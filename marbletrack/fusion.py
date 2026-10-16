@@ -52,6 +52,7 @@ class LeaderboardEntry:
     finish_time: float | None
     gap_m: float  # distance behind the leader (0 for finished marbles)
     photo_finish: bool = False  # finish within timing resolution of a neighbour: needs review
+    lap: int = 1  # lap the marble is on (1-based; the last lap once finished)
 
 
 @dataclass
@@ -60,6 +61,15 @@ class RaceEvent:
     kind: str  # finish | camera_offline | camera_online
     subject: str
     detail: str = ""
+
+
+def _ranges(r):
+    """A camera's coverage: one (lo, hi) or a list of them (a camera may see several stretches)."""
+    if r is None:
+        return []
+    if len(r) and np.ndim(r[0]) == 0:
+        return [tuple(r)]
+    return [tuple(x) for x in r]
 
 
 def _merge(intervals):
@@ -90,6 +100,12 @@ class FusionEngine:
         turned into a blind zone until frames resume.
     Re-acquisition after any of these is by colour; the motion gate widens with
     the filter covariance while a marble is unseen.
+
+    Laps: with ``lap_length`` set, the track is a circuit and detections carry
+    progress within one lap. Each is also tried one, two, ... laps further on and
+    the motion gate picks the lap that fits the marble; positions, ranking, blind
+    zones and the finish line (``s_finish``, the line on the last lap) all work in
+    total distance, so a marble that laps another is simply far ahead of it.
     """
 
     def __init__(
@@ -119,10 +135,14 @@ class FusionEngine:
         maneuver_nis: float = 9.0,
         maneuver_boost: float = 25.0,
         maneuver_time: float = 0.15,
+        laps: int = 1,
+        lap_length: float | None = None,
     ):
         self.marbles = [MarbleState(m, i) for i, m in enumerate(marble_ids)]
         self.s_finish = s_finish
         self.track_length = track_length
+        self.laps = max(1, int(laps))
+        self.lap_length = float(lap_length) if lap_length else None
         self.cameras = dict(cameras or {})
         self.static_blind_zones = list(static_blind_zones)
         self.q = accel_sigma**2
@@ -153,17 +173,38 @@ class FusionEngine:
 
     # -- camera health -----------------------------------------------------
     def _compute_blind_zones(self):
+        L = self.lap_length or self.track_length
         if not self.cameras:
-            return _merge(self.static_blind_zones)
-        covered = _merge(r for c, r in self.cameras.items() if self._online.get(c, True))
-        zones, end = list(self.static_blind_zones), 0.0
-        for a, b in covered:
-            if a > end:
-                zones.append((end, a))
-            end = max(end, b)
-        if end < self.track_length:
-            zones.append((end, self.track_length))
+            zones = list(self.static_blind_zones)
+        else:
+            covered = _merge(r for c, rs in self.cameras.items() if self._online.get(c, True) for r in _ranges(rs))
+            zones, end = list(self.static_blind_zones), 0.0
+            for a, b in covered:
+                if a > end:
+                    zones.append((end, a))
+                end = max(end, b)
+            if end < L:
+                zones.append((end, L))
+        if self.lap_length:  # the same stretches on every lap
+            zones = [(a + k * L, b + k * L) for k in range(self.laps) for a, b in zones]
         return _merge(zones)
+
+    def _lap_candidates(self, det: Detection) -> Detection:
+        """On a circuit, every position within the lap may be on any lap of the race."""
+        L = self.lap_length
+        cands = [replace(c, s=float(np.mod(c.s, L)) + k * L) for c in det.candidates for k in range(self.laps)]
+        return replace(det, candidates=cands)
+
+    def _cold_start_candidate(self, det: Detection):
+        """A marble seen for the first time: the lap that puts it nearest the field (lap 1 at the start)."""
+        if not self.lap_length:
+            return det.candidates[0]
+        known = [m.x[0] for m in self.marbles if m.initialized]
+        ref = float(np.median(known)) if known else 0.0
+        own = [c for c in det.candidates if c.s < self.lap_length] or det.candidates
+        best = min(own, key=lambda c: c.dist)
+        return min((c for c in det.candidates if abs(np.mod(c.s, self.lap_length) - np.mod(best.s, self.lap_length)) < 1e-9),
+                   key=lambda c: abs(c.s - ref))
 
     def _check_health(self) -> None:
         changed = False
@@ -380,6 +421,8 @@ class FusionEngine:
         if not np.isfinite(t):
             return
         detections = [d for d in map(self._sanitize, detections) if d is not None]
+        if self.lap_length:
+            detections = [self._lap_candidates(d) for d in detections]
         self.now = max(self.now, t)
         if cam_id is not None:
             self._last_frame[cam_id] = max(t, self._last_frame.get(cam_id, t))
@@ -406,7 +449,7 @@ class FusionEngine:
                 if c_color > self.color_gate or c_color > best_color + self.color_margin:
                     continue
                 if not m.initialized:
-                    cand = det.candidates[0]
+                    cand = self._cold_start_candidate(det)
                     cost[i, j] = c_color
                     choice[i, j] = (cand.s, self._r(det, cand), det.sigma_s(cand) ** 2, self._bias(det, cand))
                     continue
@@ -447,6 +490,13 @@ class FusionEngine:
         if age <= self.tracking_timeout:
             return "tracking"
         return "coasting" if age <= self.lost_after else "lost"
+
+    def lap_of(self, m: MarbleState) -> int:
+        if not self.lap_length or not m.initialized:
+            return 1
+        if m.finish_time is not None:
+            return self.laps
+        return int(np.clip(np.floor(m.x[0] / self.lap_length) + 1, 1, self.laps))
 
     def leaderboard(self, now: float | None = None) -> list[LeaderboardEntry]:
         now = self.now if now is None else now
@@ -554,6 +604,7 @@ class FusionEngine:
                     finish_time=m.finish_time,
                     gap_m=0.0 if st == "finished" or not m.initialized else float(leader_s - m.x[0]),
                     photo_finish=i in close,
+                    lap=self.lap_of(m),
                 )
             )
         return out

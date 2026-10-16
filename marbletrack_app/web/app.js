@@ -111,7 +111,7 @@ const active = () => S.st.cameras.filter((c) => c.enabled);
 function stepSummary(id) {
   const st = S.st, p = st.project, act = active();
   switch (id) {
-    case "race": return `${plural(p.marbles.length, "marble")} · ${p.track_length ? fmtM(p.track_length, 1) : "length not set"}`;
+    case "race": return `${plural(p.marbles.length, "marble")} · ${p.track_length ? fmtM(p.track_length, 1) : "length not set"}${p.laps > 1 ? ` · ${p.laps} laps` : ""}`;
     case "cameras": return st.cameras.length ? `${act.length} of ${plural(st.cameras.length, "camera")} in use` : "None found yet";
     case "waypoints": return `${act.filter((c) => c.markers.length >= 2).length} of ${act.length} cameras placed`;
     case "background": return `${act.filter((c) => c.has_background).length} of ${act.length} captured`;
@@ -215,8 +215,9 @@ VIEWS.race = {
       <div class="card stack">
         <label class="field"><span>Race name</span><input class="input" id="pname" maxlength="80" value="${esc(p.name)}"></label>
         <div class="grid3">
-          ${num("plen", "Track length", p.track_length || "", "m", "0.01", "Start gate to the end of the run-out.")}
-          ${num("pfin", "Finish line at", p.finish_s || "", "m", "0.01", "Distance from the start gate.")}
+          ${num("plen", p.laps > 1 ? "Lap length" : "Track length", p.track_length || "", "m", "0.01", p.laps > 1 ? "Start line, once round the circuit, back to the start line." : "Start gate to the end of the run-out.")}
+          ${num("pfin", "Finish line at", p.finish_s || "", "m", "0.01", p.laps > 1 ? "Distance from the start line, crossed on the last lap." : "Distance from the start gate.")}
+          ${num("plaps", "Laps", p.laps, "laps", "1", "More than one: the track is a circuit that returns to the start line.")}
           ${num("pspc", "Waypoint marks every", p.marker_spacing, "m", "0.05", "Put a small mark on the track at this spacing.")}
         </div>
         <details class="more"><summary>${I.chev}More track settings</summary><div class="grid3">
@@ -239,6 +240,7 @@ VIEWS.race = {
     $("#pname", el).onchange = (e) => commit("name", e.target.value);
     $("#plen", el).onchange = (e) => commit("track_length", +e.target.value || 0);
     $("#pfin", el).onchange = (e) => commit("finish_s", +e.target.value || 0);
+    $("#plaps", el).onchange = (e) => commit("laps", Math.max(1, Math.round(+e.target.value || 1)));
     $("#pspc", el).onchange = (e) => commit("marker_spacing", Math.max(0.02, +e.target.value || 0.2));
     $("#pstart", el).onchange = (e) => commit("start_s", +e.target.value || 0);
     $("#pchan", el).onchange = (e) => commit("track_width_m", (+e.target.value || 50) / 1000);
@@ -476,18 +478,22 @@ VIEWS.waypoints = {
     this.side();
   },
   overlay(k) {
-    const cam = this.cam(), m = cam.markers, s = cam.marker_s, band = cam.band || [];
+    const cam = this.cam(), mAll = cam.markers, s = cam.marker_s, bandAll = cam.band || [];
+    const stretches = cam.stretches && cam.stretches.length ? cam.stretches : (mAll.length ? [[0, mAll.length - 1]] : []);
     let out = "";
-    if (m.length >= 2 && band.length === m.length) {  // searched band, perspective-scaled like the tracker's mask
-      const left = [], right = [];
-      m.forEach((p, i) => {
-        const a = m[Math.max(0, i - 1)], b = m[Math.min(m.length - 1, i + 1)], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
-        const nx = -dy / l, ny = dx / l;
-        left.push([p[0] + nx * band[i], p[1] + ny * band[i]]); right.push([p[0] - nx * band[i], p[1] - ny * band[i]]);
-      });
-      out += `<polygon points="${[...left, ...right.reverse()].map((p) => p.join(",")).join(" ")}" fill="rgba(108,196,216,.16)" stroke="rgba(108,196,216,.9)" stroke-width="${1.2 * k}" stroke-dasharray="${5 * k} ${4 * k}"/>`;
+    for (const [a0, a1] of stretches) {  // each stretch of track this camera sees: its own band and curve
+      const m = mAll.slice(a0, a1 + 1), band = bandAll.slice(a0, a1 + 1);
+      if (m.length >= 2 && band.length === m.length) {  // searched band, perspective-scaled like the tracker's mask
+        const left = [], right = [];
+        m.forEach((p, i) => {
+          const a = m[Math.max(0, i - 1)], b = m[Math.min(m.length - 1, i + 1)], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+          const nx = -dy / l, ny = dx / l;
+          left.push([p[0] + nx * band[i], p[1] + ny * band[i]]); right.push([p[0] - nx * band[i], p[1] - ny * band[i]]);
+        });
+        out += `<polygon points="${[...left, ...right.reverse()].map((p) => p.join(",")).join(" ")}" fill="rgba(108,196,216,.16)" stroke="rgba(108,196,216,.9)" stroke-width="${1.2 * k}" stroke-dasharray="${5 * k} ${4 * k}"/>`;
+      }
+      if (m.length >= 2) out += `<polyline points="${spline(m).map((p) => p.join(",")).join(" ")}" fill="none" stroke="#f2a93b" stroke-width="${2 * k}" stroke-linejoin="round"/>`;
     }
-    if (m.length >= 2) out += `<polyline points="${spline(m).map((p) => p.join(",")).join(" ")}" fill="none" stroke="#f2a93b" stroke-width="${2 * k}" stroke-linejoin="round"/>`;
     m.forEach((p, i) => {
       const r = 6 * k;
       out += `<g><circle class="mk" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="${r}" fill="rgba(242,169,59,.25)" stroke="#f2a93b" stroke-width="${2 * k}"/>
@@ -533,23 +539,27 @@ VIEWS.waypoints = {
   },
   side() {
     const cam = this.cam(), p = S.st.project, n = cam.markers.length;
+    const pendingBreak = (cam.breaks || []).some((b) => b >= n);
     $("#side").innerHTML = `
       <div class="card stack">
         <h3>${esc(cam.name)}</h3>
         ${n === 0 ? note("info", `Click the centre of the track at the <b>first mark</b> this camera sees, then the next ones in race direction. Tip: rest a marble on each mark and click its centre.`) : ""}
         ${n === 1 ? note("info", "Now the next mark in race direction.") : ""}
-        <dl class="kv"><dt>Waypoints</dt><dd>${n}</dd><dt>Covers</dt><dd>${cam.s_range ? `${fmtM(cam.s_range[0])} – ${fmtM(cam.s_range[1])}` : "—"}</dd><dt>Spacing</dt><dd>${fmtM(p.marker_spacing)}</dd>
+        ${pendingBreak ? note("info", "Next click starts a <b>new stretch</b>: the first mark of that other part of the track. Then click its label and enter its distance.") : ""}
+        <dl class="kv"><dt>Waypoints</dt><dd>${n}</dd><dt>Covers</dt><dd>${(cam.s_ranges || []).length ? cam.s_ranges.map(([a, b]) => `${fmtM(a)} – ${fmtM(b)}`).join("<br>") : "—"}</dd><dt>Spacing</dt><dd>${fmtM(p.marker_spacing)}</dd>
           <dt title="Track length per image pixel along the track: what one pixel of error costs">Detail</dt><dd>${cam.mm_per_px ? `${cam.mm_per_px[0]}–${cam.mm_per_px[1]} mm per pixel` : "—"}</dd></dl>
         ${cam.mm_per_px && cam.mm_per_px[1] > 6 ? note("warn", `The far end of this view has only one pixel per ${cam.mm_per_px[1]} mm of track. Positions there are less precise: move the camera closer or give the stretch to another camera.`) : ""}
         <label class="field"><span>Track band width</span><input type="range" min="0.5" max="2.5" step="0.05" id="wscale" value="${cam.width_scale}" ${n < 2 ? "disabled" : ""}>
           <small>The blue band is where the tracker looks for marbles. It should cover the channel, walls included.</small></label>
         <div class="row"><button class="btn sm" id="undo" ${n ? "" : "disabled"} title="Ctrl+Z">${I.undo}Undo</button>
+          <button class="btn sm" id="stretch" ${n >= 2 && !pendingBreak ? "" : "disabled"} title="This camera also sees another part of the track (the other leg of a hairpin, a pass under a bridge): mark it as a separate stretch, in race order">${I.plus}New stretch</button>
           <button class="btn sm ghost danger" id="clear" ${n ? "" : "disabled"}>Clear all</button>
           ${cam.backend === "demo" ? `<button class="btn sm" id="auto" title="Places the marks an installer would click">${I.wand}Place for me (demo)</button>` : ""}</div>
         <small class="hint">Drag a waypoint to move it. Click its label to change its distance.</small>
       </div>
       ${S.st.coverage.gaps.length ? note("warn", `${plural(S.st.coverage.gaps.length, "stretch", "stretches")} of track ${S.st.coverage.gaps.length === 1 ? "is" : "are"} not covered by any camera. Fine for tunnels; otherwise move a camera or add waypoints.`) : ""}`;
     $("#undo").onclick = () => api("undo_marker", { key: cam.key });
+    $("#stretch").onclick = () => api("new_stretch", { key: cam.key });
     $("#clear").onclick = () => { if (confirm(`Remove all ${n} waypoints of ${cam.name}?`)) api("clear_markers", { key: cam.key }); };
     $("#wscale").oninput = (e) => { cam.width_scale = +e.target.value; };
     $("#wscale").onchange = (e) => api("update_camera", { key: cam.key, width_scale: +e.target.value });
@@ -699,6 +709,7 @@ VIEWS.server = {
           <label class="field"><span>Colour swatch</span><input class="input" id="vcolor" value="${esc(v.color_field)}" spellcheck="false" placeholder="e.g. P{n}Color.Fill.Color"><small>A shape filled with the marble's colour. Optional.</small></label>
           <label class="field"><span>Clock and status fields</span><div class="row" style="flex-wrap:nowrap"><input class="input" id="vclock" value="${esc(v.clock_field)}" spellcheck="false"><input class="input" id="vstatus" value="${esc(v.status_field)}" spellcheck="false"></div><small>Race clock; READY / LIVE / FINAL. Leave empty to skip.</small></label>
           ${num("vrows", "Rows in the title", v.rows, "rows", "1", "0 = one row per marble.")}
+          <label class="field"><span>Lap field</span><input class="input" id="vlap" value="${esc(v.lap_field || "")}" spellcheck="false" placeholder="e.g. Lap.Text"><small>Lap races: LAP 2/3, then FINAL LAP. Optional.</small></label>
         </div>
         <div class="row"><button class="btn" id="vtest">Test vMix</button><span id="vres" class="hint" aria-live="polite"></span></div>
       </div>` + `
@@ -724,7 +735,7 @@ VIEWS.server = {
     $("#ven", el).onchange = (e) => { setv("enabled", e.target.checked); $("#vform").style.opacity = e.target.checked ? 1 : 0.5; };
     $("#vform").style.opacity = v.enabled ? 1 : 0.5;
     [["vhost", "host"], ["vinput", "input"], ["vname", "name_field"], ["vinfo", "info_field"], ["vcolor", "color_field"],
-     ["vclock", "clock_field"], ["vstatus", "status_field"]].forEach(([id, k]) => { $(`#${id}`, el).onchange = (e) => setv(k, e.target.value); });
+     ["vclock", "clock_field"], ["vstatus", "status_field"], ["vlap", "lap_field"]].forEach(([id, k]) => { $(`#${id}`, el).onchange = (e) => setv(k, e.target.value); });
     $("#vrows", el).onchange = (e) => setv("rows", +e.target.value || 0);
     $("#vtest", el).onclick = (e) => busy(e.currentTarget, "Connecting…", async () => {
       document.activeElement?.blur();
@@ -837,7 +848,9 @@ function paintLive(d) {
   rows.innerHTML = board.map((e) => {
     const fin = e.finish_time != null, hid = e.status === "coasting" || e.status === "lost" || e.status === "unseen";
     const val = fin ? fmtS(e.finish_time) : e.status === "unseen" ? "not seen yet" : e === leader ? fmtM(e.progress_m, 1) : `+${(e.gap_m).toFixed(2)} m`;
-    const sub = e.photo_finish ? "photo finish: review" : fin ? `#${e.rank}` : e.status === "coasting" ? "hidden" : e.status === "lost" ? "lost" : e.status === "acquiring" ? "new" : `${e.speed_mps.toFixed(2)} m/s`;
+    const laps = S.st.project.laps || 1;
+    const lapTxt = laps > 1 && !fin && e.status !== "unseen" ? `Lap ${e.lap || 1}/${laps} · ` : "";
+    const sub = lapTxt + (e.photo_finish ? "photo finish: review" : fin ? `#${e.rank}` : e.status === "coasting" ? "hidden" : e.status === "lost" ? "lost" : e.status === "acquiring" ? "new" : `${e.speed_mps.toFixed(2)} m/s`);
     return `<div class="lrow ${fin ? "fin" : ""} ${hid ? "hid" : ""} ${e.photo_finish ? "photo" : ""}" data-id="${esc(e.marble_id)}">
       <span class="rk">${e.rank}</span><span class="swatch" style="background:${esc(e.color)}"></span><span class="nm" title="${esc(e.name)}">${esc(e.name)}</span>
       <span class="val">${esc(val)}<small>${esc(sub)}</small></span></div>`;

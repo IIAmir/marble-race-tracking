@@ -33,7 +33,7 @@ ACTIONS = {
     "update_camera", "move_camera", "forget_camera", "add_marker", "undo_marker", "clear_markers",
     "set_marker_distance", "move_marker", "autofill_markers", "capture_background", "sample_colour",
     "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "list_maps", "open_map", "new_map", "export_map", "import_map",
-    "check_views", "realign_cameras", "go_live", "stop_live",
+    "check_views", "realign_cameras", "new_stretch", "go_live", "stop_live",
     "new_race", "focus_camera",
 }
 
