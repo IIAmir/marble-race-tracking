@@ -205,7 +205,7 @@ function updateStep() { if (current && current.update) current.update(); }
 const head = (title, text) => `<div class="head"><h1>${title}</h1><p>${text}</p></div>`;
 const note = (kind, html) => `<div class="note ${kind}">${kind === "ok" ? I.ok : kind === "info" ? I.info : I.alert}<div>${html}</div></div>`;
 function num(id, label, value, unit, step = "0.01", hint = "") {
-  return `<label class="field"><span>${label}</span><div class="unit" data-unit="${unit}"><input class="input num" id="${id}" type="number" inputmode="decimal" min="0" step="${step}" value="${value ?? ""}"></div>${hint ? `<small>${hint}</small>` : ""}</label>`;
+  return `<label class="field"><span>${label}</span><div class="unit" data-unit="${unit}" style="--u:${unit.length}"><input class="input num" id="${id}" type="number" inputmode="decimal" min="0" step="${step}" value="${value ?? ""}"></div>${hint ? `<small>${hint}</small>` : ""}</label>`;
 }
 
 /* ================================================================== 1. race & marbles */
@@ -317,8 +317,8 @@ VIEWS.cameras = {
     const cams = S.st.cameras, box = $("#camlist");
     if (!box) return;
     if (!cams.length) {
-      box.innerHTML = `<div class="card empty-state"><h3>No cameras found</h3><p>MarbleTrack looks for USB and industrial (Basler) cameras.</p>
-        <ul><li>Check the cable and that the camera has power.</li><li>Close other apps that use the camera (Teams, Zoom, the Camera app).</li>
+      box.innerHTML = `<div class="card empty-state"><h3>No cameras found</h3><p>MarbleTrack looks for NDI cameras on the network, USB cameras and industrial (Basler) cameras.</p>
+        <ul><li>Check the cable and that the camera has power.</li><li>NDI cameras: the PC and the cameras must be on the same network, and Windows Firewall must allow MarbleTrack on private networks.</li><li>Close other apps that use the camera (Teams, Zoom, the Camera app).</li>
         <li>Many cameras on one USB controller can exceed its bandwidth: spread them over ports or add a USB card.</li>
         <li>Basler cameras need the pylon software installed.</li></ul>
         ${S.st.demo ? "" : '<p class="hint">To try MarbleTrack without hardware, start it with <code>--demo</code>.</p>'}</div>`;
@@ -332,7 +332,7 @@ VIEWS.cameras = {
           <span class="order">${order}</span>${c.preview.error ? `<span class="badge chip bad" title="${esc(c.preview.error)}">Error</span>` : ""}</div>
         <div class="cam-body">
           <input class="input name" value="${esc(c.name)}" maxlength="60" aria-label="Camera name" title="${esc(c.name)}">
-          <div class="cam-meta"><span class="num">${c.width && c.height ? `${c.width}×${c.height}` : "—"}</span><span>${c.fps ? Math.round(c.fps) + " fps" : ""}</span><span class="ellipsis" title="${esc(c.key)}">${esc(c.backend === "opencv" ? "USB" : c.backend === "pylon" ? "Basler" : "Demo")}</span></div>
+          <div class="cam-meta"><span class="num">${c.width && c.height ? `${c.width}×${c.height}` : "—"}</span><span>${c.fps ? Math.round(c.fps) + " fps" : ""}</span><span class="ellipsis" title="${esc(c.key)}">${esc({ opencv: "USB", pylon: "Basler", ndi: "NDI", demo: "Demo" }[c.backend] || c.backend)}</span></div>
           <div class="row">
             <label class="toggle" style="flex:1"><input type="checkbox" data-f="enabled" ${c.enabled ? "checked" : ""}> Use this camera</label>
             <button class="btn icon" data-mv="-1" title="Earlier on the track" aria-label="Move earlier" ${i === 0 ? "disabled" : ""}>${I.up}</button>
@@ -340,6 +340,7 @@ VIEWS.cameras = {
           </div>
           <select class="input" data-f="role" aria-label="What this camera watches"><option value="section" ${c.role === "section" ? "selected" : ""}>Watches a track section</option><option value="finish" ${c.role === "finish" ? "selected" : ""}>Watches the finish line</option><option value="rack" ${c.role === "rack" ? "selected" : ""}>Watches the finish rack</option></select>
           ${c.backend === "demo" ? "" : `<details class="more"><summary>${I.chev}Exposure & colour</summary><div class="stack">
+            ${c.backend === "ndi" ? `<small class="hint">NDI cameras keep the exposure, shutter and white balance set in their own web page; the switches below do not change them.</small>` : ""}
             <label class="toggle"><input type="checkbox" data-f="auto_exposure" ${c.auto_exposure ? "checked" : ""}> Automatic exposure</label>
             <label class="field"><span>Exposure</span><input type="range" min="-13" max="-1" step="1" data-f="exposure" value="${c.exposure ?? -6}" ${c.auto_exposure ? "disabled" : ""}><small>Short exposures stop motion blur. Keep the lighting constant.</small></label>
             <label class="toggle"><input type="checkbox" data-f="auto_white_balance" ${c.auto_white_balance ? "checked" : ""}> Automatic white balance</label>
@@ -509,7 +510,7 @@ VIEWS.waypoints = {
       }
       if (m.length >= 2) out += `<polyline points="${spline(m).map((p) => p.join(",")).join(" ")}" fill="none" stroke="#f2a93b" stroke-width="${2 * k}" stroke-linejoin="round"/>`;
     }
-    m.forEach((p, i) => {
+    mAll.forEach((p, i) => {
       const r = 6 * k;
       out += `<g><circle class="mk" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="${r}" fill="rgba(242,169,59,.25)" stroke="#f2a93b" stroke-width="${2 * k}"/>
         <circle cx="${p[0]}" cy="${p[1]}" r="${1.4 * k}" fill="#fff" pointer-events="none"/>
@@ -832,12 +833,11 @@ function renderLive() {
             <button class="btn sm ghost" id="freeze" title="Keep the board on air exactly as it is now">Freeze board</button>
             <button class="btn sm ghost" id="hideb" title="Take the board off air (vMix fields emptied)">Hide board</button>
           </div>
-          <small class="hint">Click a marble to swap it with another or to move it in the result. Every correction is logged.</small>
           <details class="more"><summary>${I.chev}Training data</summary><div class="stack">
             <small class="hint">Roll <b>one marble alone</b> through the course: every camera saves what it detects, labelled with that marble (real light, blur and shadows). A run with no marble at all collects what must be rejected.</small>
             <div class="row"><select class="input" id="hlabel" style="flex:1">${S.st.project.marbles.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} alone</option>`).join("")}<option value="empty">No marble (empty track)</option></select>
             <button class="btn sm" id="harvest">Start</button></div><span class="hint" id="hstate"></span></div></details></div>
-          <div class="rows" id="rows"></div></aside>
+          <div class="rows" id="rows" title="Click a marble to swap it with another or to move it in the result. Every correction is logged."></div></aside>
       <div class="status-bar">
         <div class="sbox"><span class="k">Cameras</span><span class="v" id="camsum"></span><span class="d" id="camdet"></span></div>
         <div class="sbox"><span class="k">Leaderboard server</span><span class="v" id="srv"></span><span class="d" id="srvdet"></span></div>

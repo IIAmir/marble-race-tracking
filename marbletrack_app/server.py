@@ -46,6 +46,9 @@ def web_root() -> Path:
     raise FileNotFoundError("web folder missing")
 
 
+mimetypes.add_type("font/woff2", ".woff2")  # not in every Windows registry
+
+
 class Server:
     def __init__(self, app: App, port: int = 0):
         self.app = app

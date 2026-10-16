@@ -72,7 +72,7 @@ label.field > small, .hint { color: var(--faint); font-size: 12.5px; }
 .input:focus { border-color: var(--accent); outline: none; }
 .input.num { text-align: right; }
 .unit { position: relative; }
-.unit .input { padding-right: 34px; }
+.unit .input { padding-right: calc(var(--u, 2) * 0.62em + 18px); }
 .unit::after { content: attr(data-unit); position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 12.5px; pointer-events: none; }
 .toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
 .toggle input { appearance: none; width: 36px; height: 20px; border-radius: 99px; background: var(--line-2); position: relative; cursor: pointer;
@@ -252,7 +252,9 @@ details.more > div { margin-top: 14px; }
 .race-state { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .clock { font: 650 34px/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .rows { overflow: auto; padding: 6px; position: relative; }
-.lrow { display: grid; grid-template-columns: 30px 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; will-change: transform; }
+.lrow { display: grid; grid-template-columns: 30px 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 8px; will-change: transform; cursor: pointer;
+  transition: background-color 120ms ease; }
+@media (hover: hover) and (pointer: fine) { .lrow:hover { background: var(--panel-3) !important; } }
 .lrow + .lrow { margin-top: 2px; }
 .lrow:nth-child(odd) { background: rgba(255, 255, 255, .025); }
 .lrow .rk { font: 650 16px var(--display); font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
@@ -319,3 +321,29 @@ textarea.input { min-height: 60px; resize: vertical; }
 .lrow { cursor: pointer; }
 .lrow:hover { outline: 1px solid var(--line, rgba(255, 255, 255, .15)); }
 .ops { gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+/* ---------------------------------------------------------------- Persian (right to left; i18n.js sets dir) */
+@font-face { font-family: "Vazirmatn"; src: url("fonts/Vazirmatn.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+[dir=rtl] { --font: "Vazirmatn", "Segoe UI Variable Text", "Segoe UI", Tahoma, sans-serif; --display: "Vazirmatn", "Segoe UI Variable Display", "Segoe UI", Tahoma, sans-serif; }
+[dir=rtl] body { line-height: 1.6; }
+[dir=rtl] .project::before { margin-right: 0; margin-left: 12px; }
+[dir=rtl] .rail { border-right: 0; border-left: 1px solid var(--line); }
+[dir=rtl] .step, [dir=rtl] .pick, [dir=rtl] .tile .t, [dir=rtl] .empty-state ul { text-align: right; }
+[dir=rtl] .empty-state ul { padding-left: 0; padding-right: 18px; }
+[dir=rtl] .rail h2, [dir=rtl] .mode, [dir=rtl] .sbox .k { letter-spacing: 0; }
+[dir=rtl] .input.num { text-align: left; }
+[dir=rtl] .unit .input { padding-right: 10px; padding-left: calc(var(--u, 2) * 0.62em + 18px); }
+[dir=rtl] .unit::after { right: auto; left: 10px; }
+[dir=rtl] .kv dd { text-align: left; }
+[dir=rtl] .picker { padding-right: 0; padding-left: 2px; }
+[dir=rtl] .rail .meta .btn { justify-self: end; }
+[dir=rtl] details.more > summary svg { transform: scaleX(-1); }
+[dir=rtl] details.more[open] > summary svg { transform: rotate(90deg); }
+[dir=rtl] .toaster { right: auto; left: 16px; }
+/* pictures, charts and numbers keep their own direction */
+[dir=rtl] .viewer, [dir=rtl] .cover, [dir=rtl] .clock, [dir=rtl] .lrow .val, [dir=rtl] .kv dd, [dir=rtl] .cam-meta, [dir=rtl] .focus, [dir=rtl] .tile { direction: ltr; }
+[dir=rtl] .lrow .val { justify-items: start; text-align: left; }
+[dir=rtl] .log { font-family: var(--font); font-size: 12.5px; }
+[dir=rtl] .log > div > span:first-child { unicode-bidi: isolate; direction: ltr; font: 12px var(--mono); margin-left: 6px; }
+[dir=rtl] .tile .t, [dir=rtl] .focus .cap { direction: rtl; }
+.lang { font-family: "Vazirmatn", var(--font); }
