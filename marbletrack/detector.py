@@ -168,6 +168,8 @@ class ColorDetector:
             raise ValueError("camera needs a background and a colour palette")
         self.work_scale = work_scale
         self.shadows = shadows
+        # fragment merging (see _merge_fragments), relative to the expected marble radius / area
+        self.merge_dist, self.merge_union, self.merge_shade = 1.5, 1.4, 20.0
         self.full_size = calib.track_mask.shape[::-1]
         if work_scale != 1.0:
             calib = scale_calibration(calib, work_scale)
@@ -283,15 +285,15 @@ class ColorDetector:
         keys, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
         dets = []
         inside = np.bincount(inverse, weights=(self.calib.track_mask[ys, xs] > 0).astype(float), minlength=len(keys))
-        groups = []  # [component, selection, centroid]
+        groups = []  # [colour class, selection, centroid]
         for g in np.flatnonzero(counts >= self.min_area):
             if inside[g] < self.min_inside * counts[g]:
                 continue  # cut by the section edge or belongs to neighbouring track
             sel = self._contiguous(xs, ys, inverse == g)
             if sel.sum() < self.min_area:
                 continue
-            groups.append([int(keys[g] // n_cls), sel, np.array([xs[sel].mean(), ys[sel].mean()])])
-        groups = self._merge_fragments(groups, xs, ys)
+            groups.append([int(keys[g] % n_cls), sel, np.array([xs[sel].mean(), ys[sel].mean()])])
+        groups = self._merge_fragments(groups, xs, ys, lab)
         for _, sel, xy in groups:
             n_px = int(sel.sum())
             cands = [c for c in self.calib.centerline.project(xy, self.calib.max_lateral_px)
@@ -320,31 +322,35 @@ class ColorDetector:
             )
         return dets
 
-    def _merge_fragments(self, groups, xs, ys):
+    def _merge_fragments(self, groups, xs, ys, lab):
         """One marble split into two colour classes is still one marble.
 
-        Shading, a number disc, a stripe or (at low resolution) chroma blur can make
-        part of a marble match a neighbouring colour better: a fragment within about
-        a radius of the bigger piece, the two together no bigger than one marble.
-        Two touching marbles of different colours are about a diameter apart and
-        twice the area. A merged fragment never becomes a detection of its own.
+        Shading, a number disc, a stripe, motion blur or (at low resolution) chroma
+        blur can make part of a marble match a neighbouring colour better. Such a
+        fragment lies within about a radius of the bigger piece, the two together
+        are about one marble, and the fragment's colour is still a plausible shade of
+        the bigger piece's marble. A neighbour in a pack (its visible crescent can
+        be as close and as small) has a colour of its own and stays separate.
         """
         if len(groups) < 2:
             return groups
         groups = sorted(groups, key=lambda g: -int(g[1].sum()))
         kept = []
-        for comp, sel, xy in groups:
+        for cls, sel, xy in groups:
             for k in kept:
-                if k[0] != comp:
-                    continue
                 cands = self.calib.centerline.project(k[2], self.calib.max_lateral_px)
                 area = self.calib.expected_area(cands[0].s) if cands else np.pi * self.calib.marble_radius_px**2
-                close = np.linalg.norm(xy - k[2]) < 1.5 * np.sqrt(area / np.pi)
-                if close and int(k[1].sum()) + int(sel.sum()) < 1.4 * area:
+                main, frag = int(k[1].sum()), int(sel.sum())
+                if np.linalg.norm(xy - k[2]) >= self.merge_dist * np.sqrt(area / np.pi):
+                    continue
+                if main + frag >= self.merge_union * area:
+                    continue
+                shade = float(d2_matrix([self.palette[k[0]]], np.median(lab[sel], axis=0))[0, 0])
+                if shade <= self.merge_shade:
                     k[1] = k[1] | sel
                     break
             else:
-                kept.append([comp, sel, xy])
+                kept.append([cls, sel, xy])
         for k in kept:  # centroid of the whole marble
             k[2] = np.array([xs[k[1]].mean(), ys[k[1]].mean()])
         return kept

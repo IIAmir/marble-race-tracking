@@ -108,6 +108,10 @@ class FusionEngine:
     total distance, so a marble that laps another is simply far ahead of it.
     """
 
+    # Switches for ablation studies (scripts compare the tracker with and without them).
+    _nll = True  # association cost includes the log of the innovation variance
+    _bound = True  # position variance bounded inside places no camera sees
+
     def __init__(
         self,
         marble_ids: list[str],
@@ -248,6 +252,16 @@ class FusionEngine:
         if m.x[0] < floor:  # cannot have rolled back out of view: stop there
             m.x[0] = floor
             m.x[1] = max(m.x[1], 0.0)
+        # Inside a place no camera sees, the marble is somewhere between floor and cap (it
+        # cannot have left without being seen): its position variance is bounded by that
+        # interval however long it stays there. In view, a marble hidden behind others is
+        # not bounded this way.
+        bound = (0.5 * (cap - floor)) ** 2 + 0.01
+        tol = self.coast_tolerance
+        if self._bound and m.P[0, 0] > bound and any(a - tol <= m.x[0] <= b + tol for a, b in self.blind_zones):
+            k = np.sqrt(bound / m.P[0, 0])
+            m.P[0, :] *= k
+            m.P[:, 0] *= k
 
     def _coast_cap(self, m: MarbleState) -> float:
         """Furthest an unobserved marble may be predicted.
@@ -484,7 +498,7 @@ class FusionEngine:
                     # Negative log-likelihood, not just the Mahalanobis distance: a marble
                     # unseen for a while has a wide gate that fits almost anything cheaply;
                     # the log-variance term makes a confidently tracked marble win the blob.
-                    cost[i, j] = c_color + best[0] + np.log(best[5] / self.r_floor)
+                    cost[i, j] = c_color + best[0] + (np.log(best[5] / self.r_floor) if self._nll else 0.0)
                     choice[i, j] = best[1:5]
         rows, cols = linear_sum_assignment(cost)
         for i, j in zip(rows, cols):
