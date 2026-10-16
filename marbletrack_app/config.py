@@ -147,6 +147,8 @@ class Project:
     blind_zones: list[list[float]] = field(default_factory=list)  # tunnels etc. [[a, b], ...]
     marker_spacing: float = 0.2  # default distance between waypoint marks (m)
     track_width_m: float = 0.05  # inside width of the running channel
+    # Sections where the channel is wider (obstacle zones, splitters): [[from_m, to_m, width_m], ...]
+    wide_zones: list[list[float]] = field(default_factory=list)
     marble_diameter_mm: float = 25.0
     marbles: list[MarbleDef] = field(default_factory=list)
     cameras: list[CameraSetup] = field(default_factory=list)
@@ -160,6 +162,14 @@ class Project:
         return cls(marbles=[MarbleDef(n.lower(), n, c) for n, c in DEFAULT_MARBLES])
 
     # -- helpers --------------------------------------------------------------
+    def width_at(self, s) -> np.ndarray:
+        """Inside channel width (m) at track distance ``s`` (within a lap)."""
+        s = np.asarray(s, float)
+        w = np.full(s.shape, float(self.track_width_m))
+        for a, b, wz in self.wide_zones:
+            w = np.where((s >= a) & (s <= b), np.maximum(w, wz), w)
+        return w
+
     def camera(self, key: str) -> CameraSetup:
         for c in self.cameras:
             if c.key == key:

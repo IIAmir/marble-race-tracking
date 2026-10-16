@@ -41,6 +41,10 @@ from .physics import VENUE_SET, VENUE_SET_FIXED, PhysicsConfig, Race, quat_to_ma
 SPACING = 0.2
 
 
+class CalibrationFailed(Exception):
+    pass
+
+
 @dataclass
 class VenueScenario:
     name: str = "venue"
@@ -87,17 +91,32 @@ def _visible_runs(cam, course, step=0.01, min_len=0.15):
     return runs
 
 
-def calibrate(cam, course, balls, laps, rng, setup_cls=None):
+def wide_zones(course, tol=0.002):
+    """The route plan's wider sections, as the operator enters them: [[from, to, width], ...] (mm precision)."""
+    wide = course.width > STANDARD + tol
+    out, k = [], 0
+    while k < len(wide):
+        if wide[k]:
+            j = k
+            while j + 1 < len(wide) and wide[j + 1]:
+                j += 1
+            out.append([round(float(course.s[k]), 2), round(float(course.s[j]), 2), round(float(course.width[k:j + 1].max()), 3)])
+            k = j + 1
+        else:
+            k += 1
+    return out
+
+
+def calibrate(cam, course, balls, laps, rng):
     """What the operator's setup produces for this camera: (CameraSetup, Project, background, calibration)."""
     from marbletrack_app import calibration as C
     from marbletrack_app.config import CameraSetup, MarbleDef, Project
 
     project = Project(name="venue", track_length=course.length, finish_s=course.finish_s, laps=laps,
                       marker_spacing=SPACING, track_width_m=STANDARD, marble_diameter_mm=2000 * BALL_R,
-                      blind_zones=[list(z) for z in course.blind],
+                      blind_zones=[list(z) for z in course.blind], wide_zones=wide_zones(course),
                       marbles=[MarbleDef(f"b{b.number}", b.name, "#%02x%02x%02x" % b.body_bgr[::-1]) for b in balls])
     markers, marks_s, breaks = [], [], []
-    widest = STANDARD
     for lo, hi in _visible_runs(cam, course):
         grid = np.arange(np.ceil(lo / SPACING) * SPACING, hi + 1e-9, SPACING)
         grid = grid[grid < course.length]
@@ -109,14 +128,21 @@ def calibrate(cam, course, balls, laps, rng, setup_cls=None):
         uv = uv + rng.normal(0, 1.0, uv.shape)
         markers += [[round(float(x), 2), round(float(y), 2)] for x, y in uv]
         marks_s += [round(float(v + rng.normal(0, 0.002)), 4) for v in grid]
-        widest = max(widest, float(course.frame(np.linspace(lo, hi, 50))[4].max()))
     if len(markers) < 2:
-        return None
+        raise CalibrationFailed("sees no track")
     marks_s = list(np.maximum.accumulate(np.array(marks_s) + np.arange(len(marks_s)) * 1e-6))
     W, H = cam.size
     setup = CameraSetup(key=cam.cam_id, backend="venue", device=cam.cam_id, name=cam.cam_id, width=W, height=H,
-                        fps=cam.fps, markers=markers, marker_s=marks_s, breaks=breaks,
-                        width_scale=float(np.clip((widest + 0.012) / STANDARD * 1.05, 1.0, 3.0)))
+                        fps=cam.fps, markers=markers, marker_s=marks_s, breaks=breaks)
+    # The operator drags the band-width slider until the blue band covers the channel everywhere.
+    s_m = np.asarray(marks_s)
+    _, _, Lv, _, w_true = course.frame(np.mod(s_m, course.length))
+    c0 = course.ball_centre(s_m, np.zeros(len(s_m)))
+    edge = [cam.project(c0 + sign * (w_true / 2)[:, None] * Lv)[0] for sign in (-1, 1)]
+    mid = cam.project(c0)[0]
+    need = np.maximum(np.linalg.norm(edge[0] - mid, axis=1), np.linalg.norm(edge[1] - mid, axis=1))
+    have = C.band_halfwidth_px(setup, project)
+    setup.width_scale = float(np.clip(np.max(need / np.maximum(have, 1e-6)) * 1.08, 0.5, 2.5))
     # empty track: the median of 12 frames over a second (spinners keep turning)
     bg = C.median_background([cam.render(None, 0.08 * k) for k in range(12)])
     mask = C.track_mask(setup, project, (W, H))
@@ -147,7 +173,7 @@ def calibrate(cam, course, balls, laps, rng, setup_cls=None):
             meds.append(np.median(C.bgr_to_lab(seg["pixels"]), axis=0))
             radii.append(seg["radius"] / max(r_exp, 1e-6))
         if not pix:
-            return None
+            raise CalibrationFailed(f"could not sample ball {spec.name} ({len(radii)} other samples)")
         setup.palette[mid] = C.fit_sample(np.concatenate(pix), len(meds), meds)
     setup.radius_scale = float(np.median(radii)) if radii else 1.0
     calib = C.build_calibration(setup, project, bg)
@@ -176,11 +202,11 @@ def _camera_job(args):
     salt = zlib.crc32(spec.cam_id.encode())
     cam = VenueCamera(spec, scene, shadows, course, seed=salt % 10000)
     rng = np.random.default_rng(seed * 7919 + salt)
-    got = calibrate(cam, course, race.balls, race.laps, rng)
+    try:
+        setup, project, bg, calib = calibrate(cam, course, race.balls, race.laps, rng)
+    except CalibrationFailed as e:
+        return {"cam_id": spec.cam_id, "ok": False, "reason": str(e)}
     setup_s = time.time() - t0
-    if got is None:
-        return {"cam_id": spec.cam_id, "ok": False, "reason": "sees no track"}
-    setup, project, bg, calib = got
     W, H = cam.size
     det = ColorDetector(calib, work_scale=_work_scale(W, H, _min_radius_px(calib)))
     o = spec.optics

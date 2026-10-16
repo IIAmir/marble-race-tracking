@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from marbletrack.color import ColorModel, bgr_to_lab
-from marbletrack.detector import CameraCalibration
+from marbletrack.detector import CameraCalibration, suppress_shadows
 from marbletrack.track import Polyline
 
 from .config import CameraSetup, ColorSample, Project
@@ -157,7 +157,7 @@ def px_per_metre(cam: CameraSetup) -> np.ndarray:
 
 def band_halfwidth_px(cam: CameraSetup, project: Project) -> np.ndarray:
     """Half-width of the searched band at each waypoint: channel width plus a marble of margin."""
-    w_m = project.track_width_m + project.marble_diameter_mm / 1000.0
+    w_m = project.width_at(cam.marker_s) + project.marble_diameter_mm / 1000.0
     return 0.5 * w_m * px_per_metre(cam) * cam.width_scale
 
 
@@ -221,7 +221,7 @@ def segment_click(frame, background, xy, r_expected: float, mask=None) -> dict:
     patch = frame[y0:y1, x0:x1]
     if background is not None:
         diff = cv2.absdiff(patch, background[y0:y1, x0:x1]).max(axis=2)
-        fg = (diff > 30).astype(np.uint8)
+        fg = suppress_shadows(patch, background[y0:y1, x0:x1], (diff > 30).astype(np.uint8))
     else:
         fg = np.zeros(patch.shape[:2], np.uint8)
         ff = np.zeros((patch.shape[0] + 2, patch.shape[1] + 2), np.uint8)
@@ -345,6 +345,8 @@ def build_calibration(cam: CameraSetup, project: Project, background: np.ndarray
         track_mask=track_mask(cam, project, (w, h)),
         marble_radius_px=float(np.median(radius)),
         max_lateral_px=float(hw.max()),
+        lateral_s=np.asarray(cam.marker_s, float),
+        lateral_px=hw,
         background=background,
         palette=[to_model(cam.palette[m.id]) for m in project.marbles],
         area_s=np.asarray(cam.marker_s, float),

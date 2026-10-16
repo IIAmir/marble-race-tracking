@@ -389,7 +389,7 @@ class App:
     # ------------------------------------------------------------------ step 1: race
     def update_race(self, **fields) -> dict:
         allowed = {"name", "notes", "laps", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
-                   "marble_diameter_mm", "auto_new_race", "blind_zones"}
+                   "marble_diameter_mm", "auto_new_race", "blind_zones", "wide_zones"}
         with self.lock:
             for k, v in fields.items():
                 if k not in allowed:
@@ -406,6 +406,9 @@ class App:
                     v = int(np.clip(int(v), 1, 99))
                 if k == "blind_zones":
                     v = [[float(a), float(b)] for a, b in v if float(b) > float(a)]
+                if k == "wide_zones":
+                    v = [[float(a), float(b), float(w)] for a, b, w in v
+                         if float(b) > float(a) and 0 < float(w) < 2 and np.isfinite(float(w))]
                 setattr(self.project, k, v)
         return self.state()
 

@@ -137,6 +137,7 @@ class FusionEngine:
         maneuver_time: float = 0.15,
         laps: int = 1,
         lap_length: float | None = None,
+        max_back: float = 0.25,
     ):
         self.marbles = [MarbleState(m, i) for i, m in enumerate(marble_ids)]
         self.s_finish = s_finish
@@ -169,6 +170,7 @@ class FusionEngine:
         self._online: dict[str, bool] = {c: True for c in self.cameras}
         self.events: list[RaceEvent] = []
         self.now = 0.0
+        self.max_back = max_back
         self.blind_zones = self._compute_blind_zones()
 
     # -- camera health -----------------------------------------------------
@@ -438,6 +440,11 @@ class FusionEngine:
         # their own detections; once out of sight they leave association.
         active = [m.finish_time is None or self.now - m.last_obs_t <= self.tracking_timeout
                   for m in self.marbles]
+        # Marbles do not jump backwards: a measurement far behind where a marble could have
+        # rolled back to (bounces are 5-15 cm) is another stretch of track seen at the same
+        # place in the image, however wide the motion gate has grown while it was unseen.
+        floor = [self._coast_floor(m) - self.max_back - max(0.0, m.last_obs_v) * max(0.0, m.last_obs_t - t)
+                 if m.initialized and m.last_obs_s is not None else -np.inf for m in self.marbles]
         for i, det in enumerate(detections):
             best_color = det.color_d2.min()
             for j, m in enumerate(self.marbles):
@@ -455,12 +462,14 @@ class FusionEngine:
                     continue
                 best = None
                 for cand in det.candidates:  # >1 only where the track overlaps itself
+                    if cand.s < floor[j]:
+                        continue
                     r = self._r(det, cand)
                     _, y, S = self._innovation(m, t, cand.s, r)
                     md = y**2 / S
                     if best is None or md < best[0]:
                         best = (md, cand.s, r, det.sigma_s(cand) ** 2, self._bias(det, cand))
-                if best[0] <= self.motion_gate:
+                if best is not None and best[0] <= self.motion_gate:
                     cost[i, j] = c_color + best[0]
                     choice[i, j] = best[1:]
         rows, cols = linear_sum_assignment(cost)

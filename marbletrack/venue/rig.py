@@ -98,9 +98,14 @@ def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 13
                                 role=role, s_hint=s_hint, principal=tuple(rng.normal(0, 4, 2))))
 
     # 1. the finish line, close (fine timing), 2. the start, 3.. the rest greedily
+    # The finish camera must see the last 40 cm before the line and 10 cm after it
+    # (the timing fit uses frames on both sides), with the line well inside the frame.
     fin = int(np.argmin(np.abs(s_samp - course.finish_s)))
-    add("cam-finish", best_for([course.finish_s - 0.1, course.finish_s, course.finish_s + 0.1], (0.35, 0.45),
-                               must=np.arange(fin - 5, fin + 6)), role="finish")
+    finish = best_for([course.finish_s - 0.2, course.finish_s - 0.1, course.finish_s], (0.4, 0.5, 0.6),
+                      must=np.arange(fin - 20, fin + 6))
+    if finish is None:
+        finish = best_for([course.finish_s - 0.1, course.finish_s], (0.5, 0.7, 0.9), must=np.arange(fin - 8, fin + 4))
+    add("cam-finish", finish, role="finish")
     add("cam-start", best_for([0.4, 0.7, 1.0], (0.6, 0.8)))
     centres = s_samp[::15]
     for k in range(n_track - 2):

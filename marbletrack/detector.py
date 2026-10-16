@@ -27,11 +27,20 @@ class CameraCalibration:
     # Optional for perspective cameras: expected full-marble blob area (px) along the section.
     area_s: np.ndarray | None = None
     area_px: np.ndarray | None = None
+    # Optional: how far from the centerline (px) a marble may be at each distance; the
+    # channel is wider in places, and one camera may see near and far stretches.
+    lateral_s: np.ndarray | None = None
+    lateral_px: np.ndarray | None = None
 
     def expected_area(self, s: float) -> float:
         if self.area_s is None:
             return float(np.pi * self.marble_radius_px**2)
         return float(np.interp(s, self.area_s, self.area_px))
+
+    def lateral_limit(self, s: float) -> float:
+        if self.lateral_s is None or self.lateral_px is None:
+            return self.max_lateral_px
+        return float(np.interp(s, self.lateral_s, self.lateral_px))
 
     @property
     def s_range(self) -> tuple[float, float]:
@@ -52,6 +61,7 @@ class Detection:
     color_d2: np.ndarray  # (K,) Mahalanobis^2 of the blob's median colour to every marble
     candidates: list[Projection]  # possible track positions (usually exactly one)
     sigma_px: float = 1.0  # centroid uncertainty; grows when the blob is partly hidden
+    median_lab: np.ndarray | None = None  # the blob's median colour (diagnostics, colour checks)
 
     def sigma_s(self, cand: Projection) -> float:
         return self.sigma_px * cand.s_per_unit
@@ -83,6 +93,31 @@ def foreground_mask(frame, background, threshold, roi=None, kernel=None) -> np.n
     return fg if kernel is None else cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel)
 
 
+def suppress_shadows(frame, background, fg, lo=0.42, hi=0.95, max_spread=0.1, min_bg=60) -> np.ndarray:
+    """Drop foreground pixels that are the background darkened (a cast shadow).
+
+    A shadow keeps the colour of the surface it falls on and darkens all three
+    channels by the same factor; a marble changes the colour or, for the black
+    marble, darkens much further (its dark side is below ``lo`` of the track's
+    brightness). Over dark surfaces (``min_bg``) a shadow is too faint to pass the
+    foreground threshold anyway, and a dark marble there must not be dropped.
+    """
+    ys, xs = np.nonzero(fg)
+    if len(ys) == 0:
+        return fg
+    f = frame[ys, xs].astype(np.float32) + 1.0
+    b = background[ys, xs].astype(np.float32) + 1.0
+    r = f / b
+    mean = r.mean(axis=1)
+    spread = np.abs(r - mean[:, None]).max(axis=1) / mean
+    shadow = (mean >= lo) & (mean <= hi) & (spread <= max_spread) & (b.min(axis=1) >= min_bg)
+    if not shadow.any():
+        return fg
+    out = fg.copy()
+    out[ys[shadow], xs[shadow]] = 0
+    return out
+
+
 def scale_calibration(calib: CameraCalibration, k: float) -> CameraCalibration:
     """The same calibration expressed for frames resized by factor ``k``."""
     w, h = calib.track_mask.shape[::-1]
@@ -97,6 +132,7 @@ def scale_calibration(calib: CameraCalibration, k: float) -> CameraCalibration:
         max_lateral_px=calib.max_lateral_px if cl.normals is not None else calib.max_lateral_px * k,
         background=cv2.resize(calib.background, size, interpolation=cv2.INTER_AREA),
         area_px=None if calib.area_px is None else calib.area_px * k * k,
+        lateral_px=None if calib.lateral_px is None or cl.normals is not None else calib.lateral_px * k,
     )
 
 
@@ -104,7 +140,8 @@ class ColorDetector:
     """Background subtraction + per-pixel colour classification + blob grouping.
 
     1. Foreground = pixels inside the track mask that differ from the empty-track
-       background (fixed cameras, locked exposure/white balance).
+       background (fixed cameras, locked exposure/white balance), minus cast
+       shadows (the background darkened, its colour kept).
     2. Each foreground pixel is classified against the camera's marble colour
        models; pixels that match nothing (highlights, shadows, noise) are dropped.
     3. Pixels are grouped by (connected component, colour class). This splits
@@ -125,10 +162,12 @@ class ColorDetector:
         bg_every: int = 10,
         color_alpha: float = 0.03,
         work_scale: float = 1.0,
+        shadows: bool = True,
     ):
         if calib.background is None or not calib.palette:
             raise ValueError("camera needs a background and a colour palette")
         self.work_scale = work_scale
+        self.shadows = shadows
         self.full_size = calib.track_mask.shape[::-1]
         if work_scale != 1.0:
             calib = scale_calibration(calib, work_scale)
@@ -189,10 +228,17 @@ class ColorDetector:
 
     def foreground(self, frame: np.ndarray) -> np.ndarray:
         if self.fg_scale == 1.0:
-            return foreground_mask(frame, self._scaled(self.background), self.fg_threshold, self._roi, self._kernel)
+            bg = self._scaled(self.background)
+            fg = foreground_mask(frame, bg, self.fg_threshold, self._roi)
+            if self.shadows:
+                fg = suppress_shadows(frame, bg, fg)
+            return cv2.morphologyEx(fg, cv2.MORPH_OPEN, self._kernel)
         # Large sensors: find marbles on a downscaled frame, classify at full resolution.
         small = cv2.resize(frame, self._small, interpolation=cv2.INTER_AREA)
-        fg = foreground_mask(small, self._scaled(self._bg_small), self.fg_threshold, self._roi_small)
+        bg = self._scaled(self._bg_small)
+        fg = foreground_mask(small, bg, self.fg_threshold, self._roi_small)
+        if self.shadows:
+            fg = suppress_shadows(small, bg, fg)
         return cv2.resize(fg, frame.shape[1::-1], interpolation=cv2.INTER_NEAREST)
 
     def _adapt_background(self, frame: np.ndarray, fg: np.ndarray) -> None:
@@ -246,7 +292,7 @@ class ColorDetector:
                 continue
             xy = np.array([xs[sel].mean(), ys[sel].mean()])
             cands = [c for c in self.calib.centerline.project(xy, self.calib.max_lateral_px)
-                     if self._inside_coverage(c)]
+                     if self._inside_coverage(c) and c.dist <= self.calib.lateral_limit(c.s)]
             if not cands:
                 continue
             full = 0.85 * self.calib.expected_area(cands[0].s)  # highlight pixels go unclassified
@@ -266,6 +312,7 @@ class ColorDetector:
                     candidates=cands,
                     # A partly hidden marble's visible centroid shifts by up to ~r/2.
                     sigma_px=1.0 + 0.5 * np.sqrt(full / 0.85 / np.pi) * max(0.0, 1.0 - n_px / full),
+                    median_lab=median_lab,
                 )
             )
         return dets

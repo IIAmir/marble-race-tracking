@@ -227,6 +227,9 @@ VIEWS.race = {
           <label class="field" style="grid-column: 1 / -1"><span>Tunnels and other places no camera can see</span>
             <input class="input" id="pblind" placeholder="e.g. 3.6–4.0, 9.2–9.5" value="${esc(p.blind_zones.map(([a, b]) => `${a}–${b}`).join(", "))}">
             <small>Ranges in metres. The tracker holds positions there instead of guessing.</small></label>
+          <label class="field" style="grid-column: 1 / -1"><span>Wider sections of the channel</span>
+            <input class="input" id="pwide" placeholder="e.g. 6.5–7.0 @ 105, 15–15.7 @ 90" value="${esc((p.wide_zones || []).map(([a, b, w]) => `${a}–${b} @ ${Math.round(w * 1000)}`).join(", "))}">
+            <small>From–to in metres @ inside width in mm, for obstacle zones and splitters wider than the channel width above. The search band follows them.</small></label>
           <label class="toggle"><input type="checkbox" id="pauto" ${p.auto_new_race ? "checked" : ""}> Start a new race automatically when marbles return after the track was clear</label>
         </div></details>
       </div>
@@ -250,6 +253,14 @@ VIEWS.race = {
       const zones = e.target.value.split(/[,;]/).map((x) => x.trim()).filter(Boolean).map((x) => x.split(/\s*[–-]\s*/).map(Number));
       if (zones.some((z) => z.length !== 2 || z.some((v) => !isFinite(v)))) { toast("warn", "Write ranges like 3.6–4.0, separated by commas."); return; }
       commit("blind_zones", zones);
+    };
+    $("#pwide", el).onchange = (e) => {
+      const zones = e.target.value.split(/[,;]/).map((x) => x.trim()).filter(Boolean).map((x) => {
+        const m = x.match(/^([\d.]+)\s*[–-]\s*([\d.]+)\s*@\s*([\d.]+)$/);
+        return m ? [+m[1], +m[2], +m[3] / 1000] : null;
+      });
+      if (zones.some((z) => !z || z.some((v) => !isFinite(v)) || z[1] <= z[0])) { toast("warn", "Write sections like 6.5–7.0 @ 105 (metres, then width in mm), separated by commas."); return; }
+      commit("wide_zones", zones);
     };
     $("#madd", el).onclick = () => {
       const ms = S.st.project.marbles.map((m) => ({ ...m }));
