@@ -752,9 +752,11 @@ class App:
             store["pixels"].append(seg["pixels"])
             store["medians"].append(np.median(bgr_to_lab(seg["pixels"]), axis=0))
             store["radii"].append(seg["radius"] / max(r_exp, 1e-6))
-            pix = np.concatenate(store["pixels"])[-6000:]
+            keep = C.consistent_clicks(store["medians"])
+            meds = [m for m, k in zip(store["medians"], keep) if k]
+            pix = np.concatenate([p for p, k in zip(store["pixels"], keep) if k])[-6000:]
             try:
-                cam.palette[marble_id] = C.fit_sample(pix, len(store["medians"]), store["medians"])
+                cam.palette[marble_id] = C.fit_sample(pix, len(meds), meds)
             except ValueError as e:
                 raise UserError(f"not enough pixels to learn this colour ({e}); move closer or click a bigger marble")
             radii = [r for (k, _), st in self.samples.items() if k == key for r in st["radii"]]
@@ -763,6 +765,7 @@ class App:
             issues = [i for i in C.palette_issues(cam, self.project) if marble_id in (i["a"], i["b"])]
         name = lambda mid: next((m.name for m in self.project.marbles if m.id == mid), mid)
         return {"centre": seg["centre"], "radius": seg["radius"], "pixels": int(len(seg["pixels"])),
+                "ignored_clicks": int(len(keep) - sum(keep)),
                 "issues": [{"other": name(i["b"] if i["a"] == marble_id else i["a"]), "d2": i["d2"]} for i in issues]}
 
     def clear_colour(self, key: str, marble_id: str) -> dict:

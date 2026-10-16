@@ -17,6 +17,7 @@ import numpy as np
 
 from .camera import AIDA, OBSBOT, CameraSpec, look_at
 from .course import BALL_R, Course
+from .raster import View, rasterize
 from .scene import Scene
 
 AZIMUTHS = (90.0, -90.0, 135.0, -135.0, 180.0, 0.0, 60.0, -60.0)
@@ -48,6 +49,28 @@ def _coverage(scene, course, C, R, optics, samples, margin=0.05, max_mm_px=1.05)
     return ok
 
 
+def _unblocked(scene: Scene, C, R, optics, samples, vis, size=(480, 270)):
+    """Of the samples ``vis`` marks visible, those not hidden by trees, buildings or the track itself.
+
+    The heightfield test above only knows the terrain; this low-resolution depth render
+    of the whole scene is what the installer checks by looking through the camera.
+    """
+    W, H = size
+    f = (W / 2) / np.tan(np.radians(optics.hfov_deg) / 2)
+    view = View(R, C, f, W / 2, H / 2, W, H)
+    depth, _ = rasterize(view, scene.tris)
+    idx = np.flatnonzero(vis)
+    uv, z = view.project(samples[idx])
+    x = np.clip(np.round(uv[:, 0]).astype(int), 0, W - 1)
+    y = np.clip(np.round(uv[:, 1]).astype(int), 0, H - 1)
+    # nearest surface around the pixel (a ball centre sits just above the channel floor)
+    near = np.max([depth[np.clip(y + dy, 0, H - 1), np.clip(x + dx, 0, W - 1)]
+                   for dx in (-1, 0, 1) for dy in (-1, 0, 1)], axis=0)
+    out = vis.copy()
+    out[idx] = z <= near + 0.01
+    return out
+
+
 def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 13, overhead: bool = True):
     rng = np.random.default_rng(seed + 404)
     step = 0.02
@@ -72,7 +95,7 @@ def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 13
         return C, look_at(C, target)
 
     def best_for(s_centres, dists, must=None):
-        best = None
+        found = []
         for s0 in s_centres:
             for az in AZIMUTHS:
                 for el in ELEVATIONS:
@@ -85,8 +108,19 @@ def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 13
                         if must is not None and not vis[must].all():
                             continue
                         gain = float((weight * (vis & ~covered)).sum())
-                        if best is None or gain > best[0]:
-                            best = (gain, C, R, vis)
+                        found.append((gain, C, R, vis))
+        # Look through the best few candidates, as an installer would: a tree or the
+        # helix tower in the way disqualifies a spot the terrain test let through.
+        best = None
+        for gain, C, R, vis in sorted(found, key=lambda c: -c[0])[:5]:
+            seen = _unblocked(scene, C, R, AIDA, samples, vis)
+            if must is not None and not seen[must].all():
+                continue
+            g = float((weight * (seen & ~covered)).sum())
+            if best is None or g > best[0]:
+                best = (g, C, R, seen)
+            if g >= 0.8 * gain:
+                break
         return best
 
     def add(name, best, role="section"):

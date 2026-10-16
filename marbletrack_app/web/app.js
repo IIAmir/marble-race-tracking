@@ -660,7 +660,8 @@ VIEWS.colours = {
       this.rings.push(ring); this.viewer.draw();
       requestAnimationFrame(() => requestAnimationFrame(() => { ring.go = true; this.viewer.draw(); }));
       setTimeout(() => { this.rings = this.rings.filter((x) => x !== ring); this.viewer?.draw(); }, 450);
-      if (r.issues.length) toast("warn", `${m.name} looks like ${r.issues.map((i) => i.other).join(", ")} to this camera. Click ${m.name} again in another spot, or see the advice on the right.`, 7000);
+      if (r.ignored_clicks) toast("warn", `${r.ignored_clicks === 1 ? "One click" : `${r.ignored_clicks} clicks`} of ${m.name} looked different from the others and ${r.ignored_clicks === 1 ? "is" : "are"} left out (part of the marble may blend into the track there). Click ${m.name} where it stands out clearly.`, 7000);
+      else if (r.issues.length) toast("warn", `${m.name} looks like ${r.issues.map((i) => i.other).join(", ")} to this camera. Click ${m.name} again in another spot, or see the advice on the right.`, 7000);
       const next = this.nextMissing(this.cam());
       if (next) S.sel.marble = next;
       this.side();

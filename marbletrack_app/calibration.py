@@ -260,6 +260,23 @@ def segment_click(frame, background, xy, r_expected: float, mask=None) -> dict:
     return {"pixels": pixels, "radius": radius, "centre": centre, "area": area}
 
 
+def consistent_clicks(medians: list, max_de: float = 25.0) -> list[bool]:
+    """Which colour clicks of one marble agree with the others.
+
+    A click can catch only part of a marble: the black ball on a dark stretch
+    of track blends into it and only its white number disc stands out. Such a
+    click's colour is far from the other clicks'. With three or more clicks,
+    a click more than ``max_de`` (CIELAB distance) from the median of all of
+    them is left out of the colour model. Without a majority, all are kept.
+    """
+    if len(medians) < 3:
+        return [True] * len(medians)
+    m = np.asarray(medians, float)
+    d = np.linalg.norm(m - np.median(m, axis=0), axis=1)
+    keep = d <= max_de
+    return keep.tolist() if keep.sum() >= 2 else [True] * len(medians)
+
+
 def fit_sample(pixels: np.ndarray, clicks: int, medians: list | None = None) -> ColorSample:
     """Colour model from all sampled pixels, plus the median blob colour.
 

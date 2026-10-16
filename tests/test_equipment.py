@@ -224,3 +224,13 @@ def test_ndi_source_receives_a_local_sender():
         src.close()
     finally:
         stop.set()
+
+
+def test_colour_click_that_caught_only_part_of_a_marble_is_left_out():
+    from marbletrack_app.calibration import consistent_clicks
+
+    black = [[14.0, 0.0, 0.0], [12.0, 1.0, -1.0], [76.0, 0.0, 1.0], [15.0, 0.0, 0.0]]  # third: only the number disc
+    assert consistent_clicks(black) == [True, True, False, True]
+    assert consistent_clicks(black[:2] + black[2:3]) == [True, True, False]
+    assert consistent_clicks(black[:2]) == [True, True]  # too few to tell
+    assert consistent_clicks([[10, 0, 0], [50, 0, 0], [90, 0, 0]]) == [True, True, True]  # no majority: keep all

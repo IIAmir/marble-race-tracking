@@ -147,12 +147,13 @@ def calibrate(cam, course, balls, laps, rng):
     bg = C.median_background([cam.render(None, 0.08 * k) for k in range(12)])
     mask = C.track_mask(setup, project, (W, H))
     # colours: every ball clicked at three places where this camera sees the track
-    runs = [(a, b) for a, b in _visible_runs(cam, course) if b - a > 0.1]
+    # the operator puts each ball down inside the blue band, i.e. between the waypoints of a stretch
+    runs = [(a, b) for a, b in setup.s_ranges if b - a > 0.1]
     radii = []
     for spec in balls:
         mid = f"b{spec.number}"
         pix, meds, tries = [], [], 0
-        while len(meds) < 3 and tries < 12:
+        while sum(C.consistent_clicks(meds)) < 3 and tries < 12:
             tries += 1
             lo, hi = runs[int(rng.integers(len(runs)))]
             s0 = rng.uniform(lo + 0.03, hi - 0.03)
@@ -174,6 +175,9 @@ def calibrate(cam, course, balls, laps, rng):
             radii.append(seg["radius"] / max(r_exp, 1e-6))
         if not pix:
             raise CalibrationFailed(f"could not sample ball {spec.name} ({len(radii)} other samples)")
+        keep = C.consistent_clicks(meds)  # the operator's app leaves out clicks that disagree
+        pix = [p for p, k in zip(pix, keep) if k]
+        meds = [m for m, k in zip(meds, keep) if k]
         setup.palette[mid] = C.fit_sample(np.concatenate(pix), len(meds), meds)
     setup.radius_scale = float(np.median(radii)) if radii else 1.0
     calib = C.build_calibration(setup, project, bg)
