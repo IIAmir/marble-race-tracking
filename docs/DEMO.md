@@ -6,7 +6,7 @@ Four things to show, each runs on its own; none needs cameras or internet.
 |---|---|---|---|
 | 1 | **The app** (setup wizard, live tracking, race control) on 15 demo cameras | `MarbleTrack (demo cameras)` from the Start menu, or `python -m marbletrack_app --demo` | 5–10 min |
 | 2 | **The venue simulator video**: 9 of the 14 venue cameras, the tracker's detections, the live board against the truth | open `results/venue_race.mp4` | 1 min |
-| 3 | **The live race simulator** in the browser: races, laps, obstacles, tracker vs truth, failures on demand | open `demo/simulator.html` (double-click) | 3–5 min |
+| 3 | **The live race simulator** in the browser: the venue routes in a forest landscape, billiard balls, laps, tracker vs truth, failures on demand | open `demo/simulator.html` (double-click) | 3–5 min |
 | 4 | **Replay in 3D** of recorded tracker output | open `demo/track3d.html` | 1–2 min |
 
 ## 1. The app
@@ -56,9 +56,23 @@ stretch no camera sees; they keep their place. For the numbers over seven routes
 
 ## 3. Browser simulator
 
-`demo/simulator.html`: pick a map, *New race*. *Kill camera*, *Dim lights*, *Network jitter*
-inject failures while it runs; the *Tracker vs truth* panel counts errors live; *Instant
-replay* goes back in time. Each race has a seed; *Restart* replays it exactly.
+`demo/simulator.html` (double-click; works offline). It opens on **Venue route 6**, the route of
+the venue video, in its landscape: forest, mountains with snow, flowers, rocks, houses, a pond.
+
+* **Map**: *Venue route 1–7* are the venue simulator's circuits (spiral tower, tunnel, obstacle
+  zones, finish down the hill, lift back to the start); 1–5 are the older test maps. Keys 1–9
+  switch maps.
+* **Balls**: *Billiard (venue set)* is the real set (the 1 and the stripe 9 both yellow);
+  *Billiard, 9 → pink* is the recommended swap; *Glass marbles* the old look.
+* **Laps**: a venue route takes about a minute a lap; choose 1 lap for a short show.
+* **Views** (top left): *Follow leader* and *TV director* are the best to show; *Finish cam* for
+  the line. *Scenery* (bottom) turns the landscape off.
+* *Kill camera*, *Dim lights*, *Network jitter* inject failures while it runs; the *Tracker vs
+  truth* panel counts errors live; *Instant replay* goes back in time. Each race has a seed;
+  *Restart* replays it exactly.
+
+The browser simulator's cameras report detections from geometry, not from pictures; the
+pixel-level test of the tracker is the venue simulator (2. above).
 
 ## What to say about accuracy
 

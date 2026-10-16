@@ -100,6 +100,7 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
   <div class="top">
     <div class="brand">Marble Race <span>Simulator</span></div>
     <label class="f">Map <select id="map"></select></label>
+    <label class="f">Balls <select id="balls" title="The venue set: ten billiard balls, the 1 and the 9 both yellow (the 9 a stripe). The second set swaps the 9 for a pink solid."><option value="venue" selected>Billiard (venue set)</option><option value="fixed">Billiard, 9 → pink</option><option value="glass">Glass marbles</option></select></label>
     <label class="f">Marbles <select id="count"><option>6</option><option>8</option><option selected>10</option><option>12</option><option>16</option></select></label>
     <label class="f">Laps <select id="laps"><option>1</option><option>2</option><option selected>3</option><option>5</option></select></label>
     <label class="f">Chaos <select id="chaos"><option value="0.1">Calm</option><option value="0.35" selected>Normal</option><option value="0.55">Wild</option></select></label>
@@ -138,6 +139,7 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
     <input id="scrub" type="range" min="0" max="0" value="0" disabled aria-label="Replay position">
     <span class="sep"></span>
     <div class="toggles">
+      <label><input type="checkbox" id="tScenery" checked> Scenery</label>
       <label><input type="checkbox" id="tLabels" checked> Labels</label>
       <label><input type="checkbox" id="tBoxes" checked> Tracker boxes</label>
       <label><input type="checkbox" id="tTrails" checked> Trails</label>
@@ -181,6 +183,7 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
 <script src="vendor/three.min.js"></script>
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/CSS2DRenderer.js"></script>
+<script src="venue_routes.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -197,7 +200,7 @@ const gauss = gaussOf(() => srnd());
 let pgauss = gaussOf(rnd);
 
 // ============================================================ marbles & colour
-const PALETTE = [
+const GLASS = [
   ["Ruby", "#d02a33"], ["Amber", "#f5821f"], ["Sun", "#f0d22c"], ["Leaf", "#2fa84f"], ["Teal", "#1fb5be"], ["Sky", "#3c96eb"],
   ["Navy", "#1f2f96"], ["Fuchsia", "#ff00ff"], ["Rose", "#f052a8"], ["Snow", "#f2f2f2"], ["Onyx", "#2b2b2e"], ["Lime", "#a8e03c"],
   ["Cobalt", "#0000ff"], ["Mint", "#9ff0cf"], ["Plum", "#6b2350"], ["Bronze", "#a8692e"],
@@ -208,7 +211,7 @@ function hexToLab(hex) {
   const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
   return [116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
 }
-const LAB = PALETTE.map(([, h]) => hexToLab(h));
+let PALETTE = GLASS, LAB = PALETTE.map(([, h]) => hexToLab(h));  // the ball set in play (setBallSet)
 
 // ============================================================ maps
 function serpentine() {
@@ -258,6 +261,15 @@ const MAPS = {
   figure8: { name: "Figure-Eight Bridge", build: figure8, laps: true, note: "lap race with a chain lift and a bridge crossing" },
   grandprix: { name: "Grand Prix", build: grandPrix, laps: true, note: "lap race, chain lift on the back straight, tunnel" },
 };
+// The venue simulator's routes (scripts/export_venue_routes.py): the same circuits as the venue
+// races and the venue video, with the spiral tower, the tunnel and the lift back to the start.
+// The finish line is down the hill, before the lift, as at the venue; past it the balls are carried
+// back to the start (the return run is not raced), so the chain starts 40 cm after the line.
+(window.VENUE_ROUTES || []).forEach((r) => {
+  MAPS["venue" + r.seed] = { name: `Venue route ${r.seed}`, laps: true, venue: true,
+    build: () => ({ pts: r.pts, closed: true, lift: [r.finishAt + 0.4 / r.length, r.lift[1]], tunnels: r.tunnels, startAt: 0, finishAt: r.finishAt }),
+    note: `the venue simulator's route ${r.seed}: ${r.length} m a lap, ${r.drop} m drop, ${r.helixTurns}-turn spiral tower, tunnel, lift back to the start` };
+});
 
 // ============================================================ track
 class Track {
@@ -313,7 +325,7 @@ class Track {
       this.lift = [a, b + 0.03];
     }
     this.startS = this.closed ? frac(def.startAt) : 0.45;
-    this.finishS = this.closed ? this.startS : this.L - def.finishBack;
+    this.finishS = this.closed ? (def.finishAt != null ? frac(def.finishAt) : this.startS) : this.L - def.finishBack;
     this.buildHash();
     this.computeOverheadCover();
   }
@@ -445,7 +457,8 @@ function buildCourse(T, mapKey, rng, enabled) {
     spiral: ["pins", "bumper", "funnel", "bumps", "spinner"],
     figure8: ["spinner", "kicker", "pins", "splitter", "rough"],
     grandprix: ["chicane", "kicker", "bumper", "rough", "spinner", "funnel", "pins"],
-  }[mapKey];
+    venue: ["pins", "spinner", "bumper", "splitter", "funnel", "bumps", "kicker", "chicane", "rough"],
+  }[MAPS[mapKey] && MAPS[mapKey].venue ? "venue" : mapKey];
   // shuffle the order a little, so each race meets the obstacles in a different sequence
   for (let k = plan.length - 1; k > 0; k--) if (u() < 0.5) { const j = Math.floor(u() * (k + 1)); [plan[k], plan[j]] = [plan[j], plan[k]]; }
   const n = plan.length, TAPER = 0.08, maxCurv = mapKey === "spiral" ? 1.6 : 0.7;
@@ -518,7 +531,7 @@ class Physics {
     this.course = buildCourse(track, mapKey, rnd, obstacles);
     track.course = this.course;
     this.laps = track.closed ? laps : 1;
-    this.raceDist = track.closed ? track.startS + this.laps * track.L : track.finishS;
+    this.raceDist = track.closed ? track.startS + (this.laps - 1) * track.L + (((track.finishS - track.startS) % track.L + track.L) % track.L || track.L) : track.finishS;
     const order = [...Array(count).keys()].sort(() => rnd() - 0.5);
     this.m = order.map((ci, k) => {
       const row = Math.floor(k / 2), lane = k % 2 ? -1 : 1, uu = () => rnd() * 2 - 1;
@@ -1097,12 +1110,264 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0c1117); scene.fog = new THREE.Fog(0x0c1117, 12, 30);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 60); camera.layers.enable(1);
 const controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.maxDistance = 25; controls.minDistance = 0.05;
-scene.add(new THREE.HemisphereLight(0xdfe8f5, 0x1d232b, 0.6));
+const hemi = new THREE.HemisphereLight(0xdfe8f5, 0x1d232b, 0.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e6, 0.95); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; scene.add(sun, sun.target);
 const fill = new THREE.DirectionalLight(0x9fc4ff, 0.25); fill.position.set(-3, 2, -2); scene.add(fill);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x1f2b24, roughness: 0.95 }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 const grid = new THREE.GridHelper(20, 40, 0x2c3a31, 0x24302a); grid.position.y = 0.0005; scene.add(grid);
+
+// ============================================================ scenery
+// The landscape of the venue's diorama around the course: ground that carries the track on
+// embankments and covers its tunnels, mountains with snow around the edge, forest, flowers,
+// rocks, houses and a pond under a sky. It is built from the course so it never hides the track
+// from a rig camera: near the track the ground stays under a 27° slope from every point of the
+// track (the rig looks down at about 45°), and no tree or house stands in a camera's line of
+// sight. The tracker's sensors are unchanged: what the feeds show is what the cameras report.
+const SKY_TOP = new THREE.Color(0x3f7fcf), SKY_HORIZON = new THREE.Color(0xd4e4ef), LAB_BG = new THREE.Color(0x0c1117);
+const sky = (() => {
+  const g = new THREE.SphereGeometry(34, 32, 16), pos = g.attributes.position, col = [];
+  for (let i = 0; i < pos.count; i++) { const u = Math.max(0, pos.getY(i) / 34); col.push(...SKY_HORIZON.clone().lerp(SKY_TOP, Math.pow(u, 0.6)).toArray()); }
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  m.renderOrder = -1; m.visible = false; m.frustumCulled = false; scene.add(m);
+  return m;
+})();
+const clouds = (() => {
+  const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d");
+  for (let k = 0; k < 7; k++) {
+    const x = 30 + k * 11 + (k % 2) * 6, y = 70 - (k % 3) * 10, r = 26 - Math.abs(k - 3) * 3;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, "rgba(255,255,255,.95)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  }
+  const tex = new THREE.CanvasTexture(c), grp = new THREE.Group(), r = mulberry32(77);
+  for (let k = 0; k < 14; k++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, fog: false, depthWrite: false, transparent: true, opacity: 0.85 }));
+    const a = r() * 6.283, d = 18 + r() * 12; s.position.set(Math.cos(a) * d, 9 + r() * 6, Math.sin(a) * d); s.scale.set(9 + r() * 8, 4 + r() * 3, 1);
+    grp.add(s);
+  }
+  grp.visible = false; scene.add(grp);
+  return grp;
+})();
+function sceneryOn() { return $("tScenery").checked; }
+function applySceneryLook() {
+  const on = sceneryOn() && W && W.scenery;
+  if (W && W.scenery) W.scenery.visible = !!on;
+  sky.visible = clouds.visible = !!on; ground.visible = grid.visible = !on;
+  scene.background = on ? SKY_HORIZON : LAB_BG;
+  scene.fog = on ? new THREE.Fog(SKY_HORIZON, 9, 33) : new THREE.Fog(LAB_BG, 12, 30);
+  hemi.color.set(on ? 0xd8e8ff : 0xdfe8f5); hemi.groundColor.set(on ? 0x55603a : 0x1d232b); hemi.intensity = on ? 0.75 : 0.6;
+}
+function buildScenery(T, cams, seed, mapKey) {
+  const r = mulberry32(seed ^ 0x2c1b3c6d), U = (a, b) => a + (b - a) * r(), grp = new THREE.Group();
+  const HW = TRACK_W / 2;
+  // track samples: fine (3 cm) near the track, coarse (12 cm) for far ground
+  const step = Math.max(1, Math.round(0.03 / T.ds)), F = [];
+  for (let i = 0; i <= T.N; i += step) {
+    const s = i * T.ds;
+    F.push({ x: T.px[i], y: T.py[i], z: T.pz[i], tun: T.inTunnel(s), emb: mapKey !== "spiral" && !T.inTunnel(s) && !T.inLift(s) });
+  }
+  const C = F.filter((_, k) => k % 4 === 0);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const p of F) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const outside = (x, z) => Math.hypot(Math.max(0, x0 - x, x - x1), Math.max(0, z0 - z, z - z1));  // distance from the course's footprint
+  function trackTerms(x, z, pts) {
+    let dmin = Infinity, cap = Infinity, emb = -Infinity, tun = -Infinity;
+    for (const p of pts) {
+      const d = Math.hypot(x - p.x, z - p.z);
+      if (d < dmin) dmin = d;
+      if (p.tun) { if (d < HW + 0.25) tun = Math.max(tun, p.y + 0.11 - 0.7 * Math.max(0, d - HW - 0.04)); continue; }
+      cap = Math.min(cap, p.y - 0.006 + 0.5 * Math.max(0, d - HW - 0.014));
+      if (p.emb) emb = Math.max(emb, p.y - 0.014 - 1.6 * Math.max(0, d - HW - 0.008));
+    }
+    return { dmin, cap, emb, tun };
+  }
+  // mountains around the edge, gentle hills in between, a pond in a hollow
+  const peaks = [];
+  for (let k = 0; k < 16; k++) {
+    const a = k / 16 * 6.283 + U(-0.15, 0.15), e = U(4.5, 9), rx = (x1 - x0) / 2 + e, rz = (z1 - z0) / 2 + e;
+    peaks.push([cx + Math.cos(a) * rx, cz + Math.sin(a) * rz, U(1.6, 4.6), U(1.3, 2.6)]);
+  }
+  let pond = null;
+  for (let k = 0; k < 60 && !pond; k++) {
+    const a = r() * 6.283, x = cx + Math.cos(a) * ((x1 - x0) / 2 + U(0.9, 2.2)), z = cz + Math.sin(a) * ((z1 - z0) / 2 + U(0.9, 2.2));
+    if (trackTerms(x, z, C).dmin > 1.2) pond = [x, z, U(0.45, 0.75)];
+  }
+  const ph = U(0, 100);
+  const wave = (x, z) => Math.sin(x * 1.3 + ph) * Math.sin(z * 1.1 + ph * 1.7) + 0.5 * Math.sin(x * 2.9 - z * 2.3 + ph * 0.3) + 0.25 * Math.sin(x * 6.1 + z * 5.3 + ph * 2.1);
+  const ridge = (x, z) => 1 - Math.abs(Math.sin(x * 0.9 + z * 0.4 + ph) * Math.cos(z * 0.8 - x * 0.3 + ph * 0.5));
+  const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  function height(x, z) {
+    const e = outside(x, z), near = e < 1.6;
+    const tt = trackTerms(x, z, near && trackTerms(x, z, C).dmin < 0.5 ? F : C);
+    let h = 0.006 * wave(x * 7, z * 7) + 0.18 * smooth(0.5, 2.5, tt.dmin) * (0.6 + 0.4 * wave(x, z));
+    for (const [px, pz, ph_, sg] of peaks) { const q = ((x - px) ** 2 + (z - pz) ** 2) / (2 * sg * sg); if (q < 9) h = Math.max(h, ph_ * Math.exp(-q) * (0.8 + 0.25 * ridge(x * 1.7, z * 1.7))); }
+    h += 0.9 * smooth(5, 14, e) * ridge(x * 0.5, z * 0.5);
+    if (pond) { const d = Math.hypot(x - pond[0], z - pond[1]); if (d < pond[2] * 1.6) h = Math.min(h, -0.05 + 0.12 * smooth(pond[2] * 0.7, pond[2] * 1.6, d) * 1.2); }
+    h = Math.max(h, tt.emb, tt.tun);
+    h = Math.min(h, tt.cap);
+    return { h, d: tt.dmin, emb: tt.emb > -0.01 && h > 0.03 && tt.dmin < 1.2 };
+  }
+  // grid: 5 cm over the course, growing to 1.3 m at the edge, ±24 m around it
+  const axis = (a, b) => {
+    const xs = []; for (let v = a - 1.4; v <= b + 1.4 + 1e-9; v += 0.05) xs.push(v);
+    let dv = 0.05, v = xs[0]; const lo = []; while (v > a - 24) { dv = Math.min(1.3, dv * 1.12); v -= dv; lo.unshift(v); }
+    dv = 0.05; v = xs[xs.length - 1]; while (v < b + 24) { dv = Math.min(1.3, dv * 1.12); v += dv; xs.push(v); }
+    return lo.concat(xs);
+  };
+  const XS = axis(x0, x1), ZS = axis(z0, z1), nx = XS.length, nz = ZS.length;
+  const pos = new Float32Array(nx * nz * 3), info = [];
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const t = height(XS[i], ZS[j]), k = j * nx + i;
+    pos[k * 3] = XS[i]; pos[k * 3 + 1] = t.h; pos[k * 3 + 2] = ZS[j]; info.push(t);
+  }
+  const idx = [];
+  for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1; idx.push(a, c, b, b, c, d); }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+  const nrm = geo.attributes.normal, col = new Float32Array(pos.length), cc = new THREE.Color();
+  const GRASS = [0x5f8f3a, 0x739f44, 0x4f7f33, 0x86a94e].map((c) => new THREE.Color(c)), ROCK = new THREE.Color(0x857d72), ROCK2 = new THREE.Color(0x5f5b55),
+    MOSS = new THREE.Color(0x5b6f3a), SNOW = new THREE.Color(0xf3f5f8), SAND = new THREE.Color(0xc8b88a), PATH = new THREE.Color(0x9a8a68);
+  for (let k = 0; k < info.length; k++) {
+    const x = pos[k * 3], y = pos[k * 3 + 1], z = pos[k * 3 + 2], ny = nrm.getY(k), w = wave(x * 3.1, z * 3.1);
+    cc.copy(GRASS[(w > 0.5 ? 1 : 0) + (w < -0.6 ? 2 : 0)]).lerp(GRASS[3], 0.5 + 0.3 * wave(x * 9, z * 9) > 0.7 ? 0.5 : 0);
+    if (info[k].d < HW + 0.07 && y < 0.03) cc.copy(PATH).lerp(SAND, 0.4 + 0.3 * w);  // gravel verge along the track
+    if (info[k].emb || ny < 0.78) cc.copy(ROCK).lerp(ROCK2, 0.5 + 0.5 * wave(x * 11, z * 13)).lerp(MOSS, ny > 0.6 ? 0.35 : 0.1);
+    if (y > 2.2 + 0.4 * wave(x * 2, z * 2) && ny > 0.45) cc.copy(SNOW);
+    if (pond && Math.hypot(x - pond[0], z - pond[1]) < pond[2] * 1.15) cc.copy(SAND);
+    cc.convertSRGBToLinear(); col[k * 3] = cc.r; col[k * 3 + 1] = cc.g; col[k * 3 + 2] = cc.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.97, metalness: 0 }));
+  terrain.receiveShadow = true; grp.add(terrain);
+  if (pond) {
+    const water = new THREE.Mesh(new THREE.CircleGeometry(pond[2] * 1.05, 40), new THREE.MeshStandardMaterial({ color: 0x3b7fa6, roughness: 0.12, metalness: 0.35, transparent: true, opacity: 0.88 }));
+    water.rotation.x = -Math.PI / 2; water.position.set(pond[0], -0.012, pond[1]); water.receiveShadow = true; grp.add(water);
+  }
+  const groundAt = (x, z) => {  // bilinear on the grid
+    const fi = (a, v) => { let lo = 0, hi = a.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (a[m] <= v) lo = m; else hi = m; } return [lo, (v - a[lo]) / (a[lo + 1] - a[lo])]; };
+    const [i, u] = fi(XS, x), [j, v] = fi(ZS, z), H = (a, b) => pos[((j + b) * nx + i + a) * 3 + 1];
+    return (H(0, 0) * (1 - u) + H(1, 0) * u) * (1 - v) + (H(0, 1) * (1 - u) + H(1, 1) * u) * v;
+  };
+  // every line of sight a rig camera uses: camera to the track points it covers
+  const sight = [];
+  for (const rc of cams) {
+    const p = rc.cam.position, n = Math.max(4, Math.ceil(T.L / 0.12));
+    for (let k = 0; k < n; k++) { const s = k * T.L / n; if (rc.covers(s) && !T.inTunnel(s)) { const q = T.sample(s); sight.push([p, new V3(q.x, q.y + 0.012, q.z)]); } }
+  }
+  const blocksView = (x, z, y0, H, rad) => {
+    const B = new V3(x, y0, z);
+    for (const [P, Q] of sight) {
+      if (Math.min(P.x, Q.x) > x + rad + 0.05 || Math.max(P.x, Q.x) < x - rad - 0.05 || Math.min(P.z, Q.z) > z + rad + 0.05 || Math.max(P.z, Q.z) < z - rad - 0.05) continue;
+      if (segSeg(P, Q, B, H)[0] < rad + 0.012) return true;
+    }
+    return false;
+  };
+  const dTrack = (x, z) => trackTerms(x, z, C).dmin;
+  const spot = (dMin, eMax, maxY = 2.0) => {
+    for (let k = 0; k < 40; k++) {
+      const x = U(x0 - eMax, x1 + eMax), z = U(z0 - eMax, z1 + eMax), y = groundAt(x, z);
+      if (y > maxY || dTrack(x, z) < dMin) continue;
+      if (pond && Math.hypot(x - pond[0], z - pond[1]) < pond[2] * 1.25) continue;
+      return [x, y, z];
+    }
+    return null;
+  };
+  const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new V3(), P = new V3();
+  function instanced(geom, mat, items, shadow = true) {
+    const m = new THREE.InstancedMesh(geom, mat, Math.max(1, items.length));
+    items.forEach((it, k) => { P.set(it.x, it.y, it.z); Q.setFromEuler(new THREE.Euler(it.rx || 0, it.ry || 0, it.rz || 0)); S.set(it.sx, it.sy ?? it.sx, it.sz ?? it.sx); M4.compose(P, Q, S); m.setMatrixAt(k, M4); m.setColorAt(k, cc.set(it.c).convertSRGBToLinear()); });
+    m.count = items.length; m.castShadow = shadow; m.receiveShadow = true; grp.add(m); return m;
+  }
+  // forest: pines and broadleaf trees, denser away from the track, up to the snow line
+  const trunks = [], cones = [], cones2 = [], crowns = [];
+  const PINE = [0x2f5a2c, 0x3a6b33, 0x2b4f2e, 0x41713a], LEAF = [0x4f8a36, 0x6a9a3c, 0x3f7a35, 0x8aa23f, 0xa8b54a, 0xc77d3a];
+  for (let n = 0; n < 2600 && trunks.length < 620; n++) {
+    const far = r() < 0.55, p = spot(far ? 1.0 : 0.16, far ? 9 : 1.6, 2.1); if (!p) continue;
+    const e = outside(p[0], p[2]), H = U(0.16, 0.42) * (1 + 0.22 * Math.min(e, 6)), pine = r() < 0.55, rad = H * (pine ? 0.3 : 0.36);
+    if (dTrack(p[0], p[2]) < HW + 0.06 + rad) continue;
+    if (blocksView(p[0], p[2], p[1], H * 1.15, rad)) continue;
+    const ry = r() * 6.28;
+    trunks.push({ x: p[0], y: p[1] + H * 0.2, z: p[2], sx: H * 0.05, sy: H * 0.4, ry, c: 0x6b4a2f });
+    if (pine) {
+      cones.push({ x: p[0], y: p[1] + H * 0.52, z: p[2], sx: rad, sy: H * 0.62, ry, c: PINE[(r() * PINE.length) | 0] });
+      cones2.push({ x: p[0], y: p[1] + H * 0.86, z: p[2], sx: rad * 0.68, sy: H * 0.42, ry, c: PINE[(r() * PINE.length) | 0] });
+    } else crowns.push({ x: p[0], y: p[1] + H * 0.68, z: p[2], sx: rad, sy: rad * U(0.85, 1.25), ry, c: LEAF[(r() * LEAF.length) | 0] });
+  }
+  const bark = new THREE.MeshStandardMaterial({ roughness: 0.9 }), leaves = new THREE.MeshStandardMaterial({ roughness: 0.85, flatShading: true });
+  instanced(new THREE.CylinderGeometry(0.6, 1, 1, 6), bark, trunks);
+  instanced(new THREE.ConeGeometry(1, 1, 8), leaves, cones);
+  instanced(new THREE.ConeGeometry(1, 1, 8), leaves, cones2);
+  instanced(new THREE.IcosahedronGeometry(1, 1), leaves, crowns);
+  // flowers in patches on the grass, a few beside the track (bright spots the detector must ignore)
+  const flowers = [], tufts = [], FL = [0xe8394a, 0xf4d03f, 0xffffff, 0xb05cd6, 0xf28cc0, 0xff8c2a, 0x5aa0ff];
+  for (let n = 0; n < 90; n++) {
+    const p = spot(0.1, 2.4, 0.4); if (!p) continue;
+    const c = FL[(r() * FL.length) | 0], R = U(0.05, 0.22);
+    for (let k = 0; k < 26; k++) {
+      const a = r() * 6.28, d = R * Math.sqrt(r()), x = p[0] + Math.cos(a) * d, z = p[2] + Math.sin(a) * d;
+      if (dTrack(x, z) < HW + 0.035) continue;
+      const s = U(0.004, 0.008); flowers.push({ x, y: groundAt(x, z) + 0.012 + s, z, sx: s, c: r() < 0.85 ? c : 0xffffff });
+    }
+  }
+  for (let n = 0; n < 2400; n++) {
+    const p = spot(HW + 0.04, 2.0, 0.5); if (!p) continue;
+    tufts.push({ x: p[0], y: p[1] + 0.008, z: p[2], sx: U(0.006, 0.012), sy: U(0.016, 0.03), ry: r() * 6.28, rx: U(-0.2, 0.2), c: GRASS[(r() * 4) | 0].getHex() });
+  }
+  instanced(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 0.6 }), flowers, false);
+  instanced(new THREE.ConeGeometry(1, 1, 4), new THREE.MeshStandardMaterial({ roughness: 0.9 }), tufts, false);
+  // rocks: boulders on the hills and along the embankments
+  const rocks = [];
+  for (let n = 0; n < 400 && rocks.length < 170; n++) {
+    const p = spot(0.12, 6, 2.6); if (!p) continue;
+    const s = U(0.02, 0.09) * (1 + 0.3 * Math.min(outside(p[0], p[2]), 5));
+    if (dTrack(p[0], p[2]) < HW + 0.05 + s || blocksView(p[0], p[2], p[1], s, s)) continue;
+    rocks.push({ x: p[0], y: p[1] + s * 0.25, z: p[2], sx: s, sy: s * U(0.5, 0.9), sz: s * U(0.7, 1.2), ry: r() * 6.28, c: [0x8a847b, 0x77736b, 0x9a948a][(r() * 3) | 0] });
+  }
+  instanced(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), rocks);
+  // a hamlet: houses on flat ground, out of every camera's view of the track
+  const walls = new THREE.MeshStandardMaterial({ color: 0xe9dcc3, roughness: 0.9 }), roofs = [0xa8432f, 0x6e4a3a, 0x5a6878];
+  for (let n = 0, made = 0; n < 200 && made < 4; n++) {
+    const p = spot(0.9, 3.2, 0.25); if (!p) continue;
+    const w = U(0.22, 0.34), d = U(0.18, 0.26), h = U(0.14, 0.2);
+    if (blocksView(p[0], p[2], p[1] - 0.05, h * 1.9, Math.hypot(w, d) / 2)) continue;
+    const yaw = r() * 3.14, house = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), walls); body.position.y = h / 2;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.hypot(w, d) / 2 * 1.08, h * 0.75, 4), new THREE.MeshStandardMaterial({ color: roofs[made % 3], roughness: 0.8, flatShading: true }));
+    roof.position.y = h + h * 0.375; roof.rotation.y = Math.PI / 4; roof.scale.set(w / Math.hypot(w, d) * 1.414, 1, d / Math.hypot(w, d) * 1.414);
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.18, h * 0.5), new THREE.MeshStandardMaterial({ color: 0x5a3b26 })); door.position.set(0, h * 0.25, d / 2 + 0.001);
+    house.add(body, roof, door); house.traverse((o) => { o.castShadow = o.receiveShadow = true; });
+    house.position.set(p[0], p[1] - 0.01, p[2]); house.rotation.y = yaw; grp.add(house); made++;
+  }
+  grp.userData.terrain = terrain;
+  return grp;
+}
+
+// ============================================================ ball sets
+// The venue's set is ten billiard balls: 1-8 solids, the 9 a stripe (yellow, like the 1) and the
+// white cue ball. The detector sees a ball's mean colour, so the 9's is yellow mixed with white.
+const BILLIARD = [
+  ["1 Yellow", "#f0af14", { n: 1 }], ["2 Blue", "#1946a0", { n: 2 }], ["3 Red", "#cd1e23", { n: 3 }], ["4 Purple", "#461e6e", { n: 4 }],
+  ["5 Orange", "#f05519", { n: 5 }], ["6 Teal", "#0a8778", { n: 6 }], ["7 Maroon", "#781928", { n: 7 }], ["8 Black", "#1a1a1c", { n: 8 }],
+  ["9 Stripe", "#efd28f", { n: 9, body: "#f0af14", stripe: true }], ["Cue", "#eeece8", { n: 0 }],
+];
+const BALL_SETS = {
+  venue: BILLIARD,
+  fixed: BILLIARD.map((b) => (b[2].n === 9 ? ["9 Pink", "#eb4696", { n: 9 }] : b)),
+  glass: GLASS,
+};
+function setBallSet(key) { PALETTE = BALL_SETS[key] || BILLIARD; LAB = PALETTE.map(([, h]) => hexToLab(h)); }
+function billiardTexture(hex, spec) {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 256; const g = c.getContext("2d"), body = spec.body || hex;
+  g.fillStyle = spec.stripe ? "#f1efe9" : body; g.fillRect(0, 0, 512, 256);
+  if (spec.stripe) { const h = 256 * Math.asin(0.42) / Math.PI; g.fillStyle = body; g.fillRect(0, 128 - h, 512, 2 * h); }
+  if (spec.n) for (const u of [128, 384]) {
+    g.fillStyle = "#f7f5ef"; g.beginPath(); g.arc(u, 128, 29, 0, 2 * Math.PI); g.fill();
+    g.fillStyle = "#121212"; g.font = "bold 34px Arial, Helvetica, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(spec.n), u, 130);
+    if (spec.n === 6 || spec.n === 9) g.fillRect(u - 9, 149, 18, 3);  // the underline that tells a 6 from a 9
+  }
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; return t;
+}
 
 function marbleTexture(hex, seed) {
   const c = document.createElement("canvas"); c.width = 128; c.height = 64; const g = c.getContext("2d");
@@ -1186,7 +1451,8 @@ function trackMeshes(T, root) {
     const p = T.world(T.finishS + (r - 0.5) * 0.006, off, 0); p.y = T.surfaceY(T.finishS, off) + 0.0012; m.position.copy(p);
     m.lookAt(p.clone().add(UP)); m.rotateZ(Math.atan2(fq.tx, fq.tz)); root.add(m);
   }
-  const fl = label(T.closed ? "START / FINISH" : "FINISH", "map"); fl.position.copy(T.world(T.finishS, 0, 0.07)); root.add(fl);
+  const fl = label(T.closed && T.finishS === T.startS ? "START / FINISH" : "FINISH", "map"); fl.position.copy(T.world(T.finishS, 0, 0.07)); root.add(fl);
+  if (T.finishS !== T.startS) { const sl = label("START", "map"); sl.position.copy(T.world(T.startS, 0, 0.07)); root.add(sl); }
   // centerline + waypoints (toggle)
   const cl = new THREE.Group(); cl.visible = false; root.add(cl);
   const lp = []; for (let i = 0; i <= T.N; i += 3) lp.push(new V3(T.px[i], T.py[i] + 0.001, T.pz[i]));
@@ -1247,13 +1513,15 @@ function gateClosedAt(g, t, raceT0) { return g.start ? raceT0 == null || t < rac
 function buildWorld(seed) {
   if (W) { scene.remove(W.root); W.labels.forEach((l) => l.element.remove()); }
   const mapKey = $("map").value, mdef = MAPS[mapKey];
+  setBallSet($("balls").value);
   const T = new Track(mdef.build());
   srnd = mulberry32(seed ^ 0x5bd1e995); simAcc = 0;
-  const phys = new Physics(T, +$("count").value, +$("laps").value, seed, +$("chaos").value, $("obstacles").checked, mapKey);
+  const phys = new Physics(T, Math.min(+$("count").value, PALETTE.length), +$("laps").value, seed, +$("chaos").value, $("obstacles").checked, mapKey);
   const cams = buildRig(T, $("rig").value);
   const root = new THREE.Group(); scene.add(root);
   const centerline = trackMeshes(T, root);
   courseMeshes(T, phys.course, root);
+  const scenery = buildScenery(T, cams, seed, mapKey); root.add(scenery);
   const box = new THREE.Box3(); for (let i = 0; i <= T.N; i += 10) box.expandByPoint(new V3(T.px[i], T.py[i], T.pz[i]));
   const c = box.getCenter(new V3()), sz = box.getSize(new V3());
   sun.position.set(c.x - 2, c.y + 6, c.z + 3); sun.target.position.copy(c);
@@ -1269,7 +1537,7 @@ function buildWorld(seed) {
   }
   // marbles: true sphere, tracker box, label, trail
   const meshes = phys.m.map((b, k) => {
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), new THREE.MeshPhysicalMaterial({ map: marbleTexture(b.hex, b.ci + 7), roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08, metalness: 0.0 }));
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), (PALETTE[b.ci][2] ? new THREE.MeshPhysicalMaterial({ map: billiardTexture(b.hex, PALETTE[b.ci][2]), roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.04, metalness: 0.0 }) : new THREE.MeshPhysicalMaterial({ map: marbleTexture(b.hex, b.ci + 7), roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08, metalness: 0.0 })));
     sphere.castShadow = true; sphere.userData.k = k; root.add(sphere);
     const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)), new THREE.LineBasicMaterial({ color: b.hex, transparent: true }));
     box.layers.set(1); box.userData.k = k; root.add(box);
@@ -1279,7 +1547,7 @@ function buildWorld(seed) {
     return { sphere, box, label: l, trail, hist: [] };
   });
   const tracker = new Tracker(T, phys, cams);
-  W = { mapKey, mdef, T, phys, cams, tracker, root, labels, meshes, camGroup, centerline, box, center: c, size: sz, seed,
+  W = { mapKey, mdef, T, phys, cams, tracker, root, scenery, labels, meshes, camGroup, centerline, box, center: c, size: sz, seed,
     state: "grid", tStart: performance.now(), lastEval: 0, replay: [], metrics: newMetrics(), log: [], faults: { dim: false, jitter: false },
     tv: { cam: null, since: -9 }, prevOrder: null, truthHist: [], selected: null, speedHist: phys.m.map(() => []), liftTex: root.userData.liftTex };
   $("laps").disabled = !mdef.laps;
@@ -1288,7 +1556,7 @@ function buildWorld(seed) {
   {  // calibration rule: every pair of marbles in the race must be separable (d² ≥ 50)
     let worst = [Infinity, "", ""];
     for (const a of phys.m) for (const b of phys.m) if (a.ci < b.ci) { const d2 = LAB[a.ci].reduce((acc, v, k) => acc + (v - LAB[b.ci][k]) ** 2, 0) / 16; if (d2 < worst[0]) worst = [d2, a.name, b.name]; }
-    logMsg(`Palette check: closest pair ${worst[1]}/${worst[2]} d² ${worst[0].toFixed(0)} ${worst[0] >= 50 ? "≥ 50 ✓" : "< 50: would be rejected at calibration"}`, worst[0] >= 50 ? "ok" : "bad");
+    logMsg(`Palette check: closest pair ${worst[1]}/${worst[2]} d² ${worst[0].toFixed(0)} ${worst[0] >= 50 ? "≥ 50 ✓" : "< 50: a look-alike pair, flagged at calibration; the tracker leans on position to tell them apart"}`, worst[0] >= 50 ? "ok" : "amb");
   }
   logMsg(`${mdef.name} · ${phys.m.length} marbles · ${(T.L).toFixed(1)} m${mdef.laps ? ` × ${phys.laps} laps` : ""} · ${mdef.note}`, "amb");
   logMsg(phys.course.log.length ? `Course (seed ${seed}): ${phys.course.log.join(" · ")}` : `Course (seed ${seed}): clean track, no obstacles`, "");
@@ -1496,6 +1764,7 @@ function render() {
   const w = view.clientWidth, h = view.clientHeight;
   renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h);
   renderer.shadowMap.needsUpdate = true;
+  sky.position.copy(camera.position);
   renderer.render(scene, camera); labelRenderer.render(scene, camera);
   fctx.clearRect(0, 0, feedCanvas.width, feedCanvas.height);
   const feeds = pickFeeds();
@@ -1509,6 +1778,7 @@ function render() {
     const y = 8;
     renderer.setViewport(x, y, fw, fh); renderer.setScissor(x, y, fw, fh);
     rc.cam.aspect = fw / fh; rc.cam.updateProjectionMatrix();
+    sky.position.copy(rc.cam.position);
     if (rc.online) renderer.render(scene, rc.cam); else { renderer.setClearColor(0x200b0b); renderer.clear(); renderer.setClearColor(0x000000); }
     feedRects.push({ rc, x, y: h - y - fh, w: fw, h: fh });
     x += fw + gap;
@@ -1708,22 +1978,23 @@ renderer.domElement.addEventListener("pointerup", (e) => {
 renderer.domElement.addEventListener("dblclick", (e) => {
   const r = renderer.domElement.getBoundingClientRect();
   mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(mouse, camera);
-  const hits = ray.intersectObjects(W.root.children.filter((o) => o.isMesh).concat([ground]));
+  const hits = ray.intersectObjects(W.root.children.filter((o) => o.isMesh).concat([ground.visible ? ground : W.scenery.userData.terrain]));
   if (hits.length) focusOn(hits[0].point, Math.max(0.3, camera.position.distanceTo(hits[0].point) * 0.45));
 });
 function applyToggles() {
   if (!W) return;
   W.camGroup.visible = $("tFrustums").checked; W.centerline.visible = $("tWaypoints").checked;
+  applySceneryLook();
   $("feedOverlay").hidden = !$("tFeeds").checked;
 }
-["tLabels", "tBoxes", "tTrails", "tFrustums", "tFeeds", "tMinimap", "tWaypoints"].forEach((id) => $(id).addEventListener("change", applyToggles));
+["tScenery", "tLabels", "tBoxes", "tTrails", "tFrustums", "tFeeds", "tMinimap", "tWaypoints"].forEach((id) => $(id).addEventListener("change", applyToggles));
 $("play").addEventListener("click", togglePlay);
 function togglePlay() { playing = !playing; $("play").textContent = playing ? "Pause" : "Resume"; }
 $("speed").addEventListener("change", (e) => (speed = +e.target.value));
 function newRace(seed) { exitReplay(); $("banner").hidden = true; buildWorld(seed ?? Math.floor(Math.random() * 1e9)); W.mmX = null; if (!playing) togglePlay(); }
 $("newRace").addEventListener("click", () => newRace());
 $("restart").addEventListener("click", () => newRace(W.seed));
-["map", "count", "laps", "rig", "chaos", "obstacles"].forEach((id) => $(id).addEventListener("change", () => newRace(W.seed)));
+["map", "balls", "count", "laps", "rig", "chaos", "obstacles"].forEach((id) => $(id).addEventListener("change", () => newRace(W.seed)));
 $("fCam").addEventListener("click", () => {
   const board = W.tracker.leaderboard(W.phys.t), lead = (board.find((e) => e.status !== "finished") || board[0]).i;
   const c = W.cams.find((c) => c.online && c.kind !== "finish" && c.covers(W.phys.m[lead].s)) || W.cams.find((c) => c.online);
@@ -1752,7 +2023,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "f" || k === "F") setViewMode("selected");
   else if (k === "v" || k === "V") { const order = ["orbit", "leader", "tv", "overhead", "finish"]; setViewMode(order[(order.indexOf(viewMode) + 1) % order.length]); }
   else if (k === "[" || k === "]") { const b = W.tracker.leaderboard(W.phys.t).map((x) => x.i), i = b.indexOf(W.selected); selectMarble(b[(i + (k === "]" ? 1 : -1) + b.length) % b.length]); }
-  else if (/^[1-5]$/.test(k)) { $("map").value = Object.keys(MAPS)[+k - 1]; newRace(W.seed); }
+  else if (/^[1-9]$/.test(k) && Object.keys(MAPS)[+k - 1]) { $("map").value = Object.keys(MAPS)[+k - 1]; newRace(W.seed); }
 });
 
 function resize() {
@@ -1788,7 +2059,7 @@ function loop(ts) {
 // ============================================================ boot
 Object.entries(MAPS).forEach(([k, m], i) => { const o = document.createElement("option"); o.value = k; o.textContent = `${i + 1}. ${m.name}`; $("map").append(o); });
 const [hMap, hSeed] = location.hash.slice(1).split("/");
-$("map").value = MAPS[hMap] ? hMap : "grandprix";
+$("map").value = MAPS[hMap] ? hMap : MAPS.venue6 ? "venue6" : "grandprix";
 resize();
 buildWorld(+hSeed > 0 ? +hSeed : Math.floor(Math.random() * 1e9));
 requestAnimationFrame(loop);
