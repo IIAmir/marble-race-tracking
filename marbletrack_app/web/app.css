@@ -316,3 +316,6 @@ details.more > div { margin-top: 14px; }
 .maprow .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 textarea.input { min-height: 60px; resize: vertical; }
 @media (max-width: 640px) { .maprow { grid-template-columns: minmax(0, 1fr); } .maprow .acts { justify-content: flex-start; } }
+.lrow { cursor: pointer; }
+.lrow:hover { outline: 1px solid var(--line, rgba(255, 255, 255, .15)); }
+.ops { gap: 6px; flex-wrap: wrap; margin-top: 8px; }

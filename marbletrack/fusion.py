@@ -533,6 +533,25 @@ class FusionEngine:
             return "tracking"
         return "coasting" if age <= self.lost_after else "lost"
 
+    def swap_identities(self, a: str, b: str) -> None:
+        """Operator correction: the tracker has two marbles the wrong way round.
+
+        Everything the filter knows (position, speed, history, finish) moves to the
+        other name, and so do their places on the board.
+        """
+        ia = next(m.index for m in self.marbles if m.marble_id == a)
+        ib = next(m.index for m in self.marbles if m.marble_id == b)
+        ma, mb = self.marbles[ia], self.marbles[ib]
+        for f in MarbleState.__dataclass_fields__:
+            if f not in ("marble_id", "index"):
+                va, vb = getattr(ma, f), getattr(mb, f)
+                setattr(ma, f, vb)
+                setattr(mb, f, va)
+        pa, pb = self._order.index(ia), self._order.index(ib)
+        self._order[pa], self._order[pb] = ib, ia
+        self._lead_since = {}
+        self.events.append(RaceEvent(self.now, "identity_swap", f"{a}<->{b}"))
+
     def lap_of(self, m: MarbleState) -> int:
         if not self.lap_length or not m.initialized:
             return 1

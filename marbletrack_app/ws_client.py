@@ -121,10 +121,12 @@ class LeaderboardStreamer:
         self._poke()
         self.thread.join(timeout=5)
 
-    def publish_board(self, race_id: str, state: str, clock, board: list, cameras: dict, late: bool = False):
+    def publish_board(self, race_id: str, state: str, clock, board: list, cameras: dict, late: bool = False,
+                      result: str | None = None, hidden: bool = False):
         msg = {"type": "leaderboard", "race_id": race_id, "race_state": state,
                "race_time": None if clock is None else round(clock, 3), "clock_estimated": bool(late), "board": board,
-               "cameras": {k: bool(v.get("online")) for k, v in cameras.items()}}
+               "cameras": {k: bool(v.get("online")) for k, v in cameras.items()},
+               "result": result, "hidden": bool(hidden)}
         with self._lock:
             self._board, self._board_dirty = msg, True
         self._poke()

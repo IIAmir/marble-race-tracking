@@ -101,3 +101,28 @@ def test_detections_timed_by_their_image_row():
         errs[per_row] = max(abs(b["top"].progress_m - (1.0 + v * t)), abs(b["bottom"].progress_m - (1.1 + v * t)))
     assert errs[False] > 0.012  # ~1.6 cm at 2.5 m/s from timing alone
     assert errs[True] < 0.004
+
+
+def test_operator_swaps_two_identities_and_the_board_follows():
+    eng = FusionEngine(["a", "b"], 50.0, 60.0, cameras={"cam": [(0.0, 60.0)]})
+    for t in np.arange(0.0, 1.0, 1 / 60):
+        eng.process(t, [_det("cam", t, 2.0 + 1.0 * t, 0), _det("cam", t, 1.0 + 1.0 * t, 1)], "cam")
+    before = {e.marble_id: e.progress_m for e in eng.leaderboard()}
+    assert [e.marble_id for e in eng.leaderboard()] == ["a", "b"]
+    eng.swap_identities("a", "b")
+    after = {e.marble_id: e.progress_m for e in eng.leaderboard()}
+    assert abs(after["a"] - before["b"]) < 1e-9 and abs(after["b"] - before["a"]) < 1e-9
+    assert [e.marble_id for e in eng.leaderboard()] == ["b", "a"]
+    assert eng.events[-1].kind == "identity_swap"
+
+
+def test_vmix_shows_provisional_until_the_result_is_confirmed():
+    cfg = VmixSetup()
+    board = [{"name": "A", "status": "finished", "finish_time": 12.3, "gap_m": 0.0}]
+    assert vmix.board_fields(cfg, board, 12.3, "complete", result="provisional")["Status.Text"] == ("SetText", "PROVISIONAL")
+    assert vmix.board_fields(cfg, board, 12.3, "complete", result="confirmed")["Status.Text"] == ("SetText", "FINAL")
+    assert vmix.board_fields(cfg, [], None, "hidden")["Status.Text"] == ("SetText", "")
+    client = vmix.VmixClient(cfg)  # not started: only the fields it wants to send
+    client.publish_board(board, 12.3, "complete")
+    client.publish_board([], None, "hidden")
+    assert client._want["P1Name.Text"] == ("SetText", "") and client._want["Clock.Text"] == ("SetText", "")

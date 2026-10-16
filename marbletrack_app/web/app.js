@@ -819,7 +819,14 @@ function renderLive() {
         <div class="focus" id="focus"><img alt="Focused camera"><span class="cap"></span></div></div>
       <aside class="board"><div class="board-head"><div class="race-state"><span id="rstate" class="chip">Waiting</span>
           <div class="row"><button class="btn sm" id="newrace" title="Clear the board and wait for the next race">New race</button><button class="btn sm ghost" id="stop">Back to setup</button></div></div>
-          <div class="clock" id="clock">0.000</div></div><div class="rows" id="rows"></div></aside>
+          <div class="clock" id="clock">0.000</div>
+          <div class="row ops" id="ops">
+            <button class="btn sm" id="confirmres" title="The result goes out as PROVISIONAL until you confirm it (after checking the finish rack)">Confirm result</button>
+            <button class="btn sm ghost" id="freeze" title="Keep the board on air exactly as it is now">Freeze board</button>
+            <button class="btn sm ghost" id="hideb" title="Take the board off air (vMix fields emptied)">Hide board</button>
+          </div>
+          <small class="hint">Click a marble to swap it with another or to move it in the result. Every correction is logged.</small></div>
+          <div class="rows" id="rows"></div></aside>
       <div class="status-bar">
         <div class="sbox"><span class="k">Cameras</span><span class="v" id="camsum"></span><span class="d" id="camdet"></span></div>
         <div class="sbox"><span class="k">Leaderboard server</span><span class="v" id="srv"></span><span class="d" id="srvdet"></span></div>
@@ -828,6 +835,30 @@ function renderLive() {
       </div>`;
     $("#tiles").onclick = (e) => { const t = e.target.closest(".tile"); if (t) setFocus(t.dataset.k); };
     $("#newrace").onclick = (e) => busy(e.currentTarget, "…", () => api("new_race", {}, { mutates: false }));
+    const op = (action, args = {}) => api("live_operator", { action, ...args }, { mutates: false });
+    $("#confirmres").onclick = () => op("confirm", { confirmed: !S.live?.race?.confirmed });
+    $("#freeze").onclick = () => op("freeze", { on: !S.live?.frozen });
+    $("#hideb").onclick = () => op("hide", { on: !S.live?.hidden });
+    $("#rows").onclick = (e) => {
+      const row = e.target.closest(".lrow"); if (!row) return;
+      const board = S.live?.board || [], id = row.dataset.id, me = board.find((x) => x.marble_id === id);
+      if (!me) return;
+      const others = board.filter((x) => x.marble_id !== id);
+      const idx = board.findIndex((x) => x.marble_id === id);
+      const fin = me.finish_time != null;
+      openPop(row.getBoundingClientRect(), `<div class="stack"><b>${esc(me.name)}</b>
+        <label class="field"><span>The tracker has it mixed up with</span><select class="input" id="swapw">${others.map((o) => `<option value="${esc(o.marble_id)}">${esc(o.name)}</option>`).join("")}</select></label>
+        <button class="btn sm" data-swap>Swap the two</button>
+        ${fin || S.live?.race?.state === "complete" ? `<div class="row"><button class="btn sm ghost" data-mv="-1" ${idx === 0 ? "disabled" : ""}>Move up</button><button class="btn sm ghost" data-mv="1" ${idx === board.length - 1 ? "disabled" : ""}>Move down</button></div>` : ""}
+        </div>`, (pop) => {
+        $("[data-swap]", pop).onclick = () => op("swap", { a: id, b: $("#swapw", pop).value }).then(closePop);
+        $$("[data-mv]", pop).forEach((b) => (b.onclick = () => {
+          const order = board.map((x) => x.marble_id), j = idx + +b.dataset.mv;
+          [order[idx], order[j]] = [order[j], order[idx]];
+          op("set_order", { order }).then(closePop);
+        }));
+      });
+    };
     $("#stop").onclick = async (e) => {
       if (S.live?.race?.state === "running" && !confirm("A race is running. Stop tracking and go back to setup?")) return;
       await busy(e.currentTarget, "Stopping…", () => api("stop_live", {}, { mutates: false }));
@@ -862,6 +893,18 @@ function paintLive(d) {
   rs.title = r.late ? "Tracking started after this race had begun: the clock and finish times are estimates." : "";
   if (r.late) rs.textContent += " · joined late";
   $("#clock").textContent = r.clock == null ? "0.000" : r.clock.toFixed(3);
+  const cr = $("#confirmres");
+  if (cr) {
+    cr.disabled = r.state !== "complete";
+    cr.textContent = r.confirmed ? "Result confirmed ✓" : "Confirm result";
+    cr.classList.toggle("primary", r.state === "complete" && !r.confirmed);
+    $("#freeze").textContent = d.frozen ? "Unfreeze board" : "Freeze board";
+    $("#freeze").classList.toggle("danger", !!d.frozen);
+    $("#hideb").textContent = d.hidden ? "Show board" : "Hide board";
+    $("#hideb").classList.toggle("danger", !!d.hidden);
+    if (r.state === "complete") { rs.textContent = r.confirmed ? "Final" : "Provisional"; rs.className = `chip ${r.confirmed ? "ok" : "warn"}`; }
+    if (d.frozen || d.hidden) rs.textContent += d.hidden ? " · off air" : " · frozen";
+  }
   // leaderboard with FLIP reordering: a pass slides the two rows (state indication), 200 ms
   const rows = $("#rows"), before = new Map($$(".lrow", rows).map((el) => [el.dataset.id, el.getBoundingClientRect().top]));
   const leader = board.find((e) => e.status !== "finished");
@@ -901,6 +944,8 @@ function paintLive(d) {
   // race control log
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
     new_race: (e) => [`New race (${e.reason})`, ""], camera_offline: (e) => [`${e.name} stopped sending frames`, "bad"], camera_online: (e) => [`${e.name} back online`, "ok"],
+    operator: (e) => [`Operator: ${{ swap: `swapped ${e.a} and ${e.b}`, set_order: `set the order ${(e.order || []).join(", ")}`, confirm: e.confirmed ? "confirmed the result" : "reopened the result", freeze: e.on ? "froze the board" : "unfroze the board", hide: e.on ? "took the board off air" : "put the board back on air" }[e.action] || e.action}`, "warn"],
+    rack_check: (e) => [e.match ? "Rack order matches the board" : `Rack order differs from the board: ${e.detail}`, e.match ? "ok" : "bad"],
     camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
   $("#log").innerHTML = (d.log || []).slice(0, 30).map((e) => {
     const f = KIND[e.kind]; if (!f) return "";

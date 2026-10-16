@@ -33,7 +33,14 @@ def test_live_session_is_recorded_and_replays_like_live():
         if all(c.get("fps", 0) > 0 or c["error"] for c in app.live_status()["cameras"].values()):
             break
         time.sleep(0.5)
-    time.sleep(8)
+    time.sleep(6)
+    # race control: a correction and a confirmation go into the session's event log
+    ids = [m.id for m in app.project.marbles]
+    app.live_operator("swap", a=ids[0], b=ids[1])
+    app.live_operator("freeze", on=True)
+    app.live_operator("freeze", on=False)
+    app.live_operator("confirm", confirmed=True)
+    time.sleep(2)
     session = app.runtime.record_dir
     app.stop_live()
     app.shutdown()
@@ -47,7 +54,11 @@ def test_live_session_is_recorded_and_replays_like_live():
         assert caps == sorted(caps)
     live = read_jsonl(session / "boards.jsonl")
     assert len(live) > 20
-    assert any(e["kind"] == "camera_recorded" for e in read_jsonl(session / "events.jsonl"))
+    events = read_jsonl(session / "events.jsonl")
+    assert any(e["kind"] == "camera_recorded" for e in events)
+    ops = [e["action"] for e in events if e["kind"] == "operator"]
+    assert ops == ["swap", "freeze", "freeze", "confirm"]
+    assert live[-1]["result"] == "confirmed"
 
     res = replay(session, workers=3)
     out = Path(res["out"])
@@ -56,8 +67,7 @@ def test_live_session_is_recorded_and_replays_like_live():
     seen_live = {e["marble_id"] for b in live for e in b["board"] if e["status"] != "unseen"}
     seen_replay = {e["marble_id"] for b in boards for e in b["board"] if e["status"] != "unseen"}
     assert seen_live and seen_replay >= seen_live - {None}  # the replay sees every marble live saw
-    # the recorded run, tracked again, ends in the same order as on air
-    assert [e["marble_id"] for e in boards[-1]["board"]][:3] == [e["marble_id"] for e in live[-1]["board"]][:3]
+    # (operator corrections are not replayed: the replay shows what the tracker alone does)
 
     # gate labels proposed from the replay, with picture strips, then the live boards scored against them
     from marbletrack_app.labels import propose, score

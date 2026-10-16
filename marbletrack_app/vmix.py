@@ -28,7 +28,7 @@ def _fmt_time(t: float | None) -> str:
     return f"{int(m)}:{s:06.3f}" if m >= 1 else f"{s:.3f}"
 
 
-def board_fields(cfg, board: list, clock, state: str, laps: int = 1) -> dict[str, tuple[str, str]]:
+def board_fields(cfg, board: list, clock, state: str, laps: int = 1, result: str = "confirmed") -> dict[str, tuple[str, str]]:
     """Title fields for one leaderboard: ``{field: (function, value)}``.
 
     ``Info`` is the finish time for finished marbles, the gap to the leader in
@@ -59,7 +59,8 @@ def board_fields(cfg, board: list, clock, state: str, laps: int = 1) -> dict[str
     if cfg.clock_field:
         out[cfg.clock_field] = ("SetText", _fmt_time(clock) if clock is not None else "")
     if cfg.status_field:
-        out[cfg.status_field] = ("SetText", {"waiting": "READY", "running": "LIVE", "complete": "FINAL"}.get(state, state.upper()))
+        final = "FINAL" if result == "confirmed" else "PROVISIONAL"  # FINAL only once the result is confirmed
+        out[cfg.status_field] = ("SetText", {"waiting": "READY", "running": "LIVE", "complete": final, "hidden": ""}.get(state, state.upper()))
     if getattr(cfg, "lap_field", ""):
         racing = [e for e in board if e.get("finish_time") is None and e.get("status") != "unseen"]
         lap = max([e.get("lap", 1) for e in racing], default=laps if state == "complete" else 1)
@@ -98,9 +99,11 @@ class VmixClient:
         self._wake.set()
         self.thread.join(timeout=3)
 
-    def publish_board(self, board: list, clock, state: str):
-        fields = board_fields(self.cfg, board, clock, state, self.laps)
+    def publish_board(self, board: list, clock, state: str, result: str = "confirmed"):
+        fields = board_fields(self.cfg, board, clock, state, self.laps, result)
         with self._lock:
+            if state == "hidden":  # off air: empty every field the title has been given
+                fields = {k: (fn, "" if fn == "SetText" else "#00000000") for k, (fn, _) in {**self._want, **fields}.items()}
             self._want.update(fields)
         self._wake.set()
 

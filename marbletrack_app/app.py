@@ -948,16 +948,32 @@ class App:
         return {"focus": key}
 
     def _on_event(self, kind: str, data: dict):
+        if kind == "board" and data.get("frozen"):
+            return  # the operator holds the board on air as it is
         if kind == "board" and self.vmix is not None:
-            self.vmix.publish_board(data["board"], data["clock"], data["state"])
+            if data.get("hidden"):
+                self.vmix.publish_board([], None, "hidden")
+            else:
+                self.vmix.publish_board(data["board"], data["clock"], data["state"], data.get("result", "provisional"))
         s = self.streamer
         if s is None:
             return
         if kind == "board":
             rt = self.runtime
-            s.publish_board(data["race_id"], data["state"], data["clock"], data["board"], rt.cam_state if rt else {}, data.get("late", False))
-        elif kind in ("race_started", "finish", "race_complete", "new_race", "camera_offline", "camera_online", "camera_error"):
+            s.publish_board(data["race_id"], data["state"], data["clock"], data["board"], rt.cam_state if rt else {},
+                            data.get("late", False), result=data.get("result"), hidden=data.get("hidden", False))
+        elif kind in ("race_started", "finish", "race_complete", "new_race", "camera_offline", "camera_online", "camera_error",
+                      "operator", "rack_check"):
             s.publish_event(kind, {k: v for k, v in data.items()})
+
+    def live_operator(self, action: str, **args) -> dict:
+        rt = self.runtime
+        if rt is None:
+            raise UserError("not live")
+        try:
+            return rt.operator(action, **args)
+        except (ValueError, KeyError) as e:
+            raise UserError(str(e))
 
     def live_status(self) -> dict:
         rt = self.runtime

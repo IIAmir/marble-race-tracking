@@ -24,7 +24,7 @@ import time
 import traceback
 import uuid
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import cv2
 import numpy as np
@@ -173,6 +173,9 @@ class RaceSession:
         self.late = False
         self.n_events = 0
         self.created = time.time()
+        # result: provisional until the operator (or the rack check) confirms it
+        self.confirmed = False
+        self.manual_order: list[str] | None = None  # operator's final order, overriding the tracker's
 
 
 class Runtime:
@@ -215,6 +218,8 @@ class Runtime:
         self.history: deque = deque(maxlen=20)
         self._publish_every = 1.0 / max(1.0, project.server.publish_hz)
         self._next_pub = 0.0
+        self.frozen = False  # operator: hold the board on air as it is
+        self.hidden = False  # operator: take the board off air
 
     # -- lifecycle ----------------------------------------------------------------
     def start(self):
@@ -277,6 +282,38 @@ class Runtime:
             self.board = []
         self._event("new_race", {"race_id": self.race.id, "reason": reason})
 
+    # -- operator console -----------------------------------------------------------
+    def operator(self, action: str, **args) -> dict:
+        """Corrections from the race-control desk. Every one is logged with its time."""
+        ids = {m.id for m in self.project.marbles}
+        with self.lock:
+            race = self.race
+            if action == "swap":
+                a, b = args["a"], args["b"]
+                if a == b or a not in ids or b not in ids:
+                    raise ValueError("pick two different marbles")
+                race.engine.swap_identities(a, b)
+                detail = {"a": a, "b": b}
+            elif action == "set_order":
+                # may be partial: marbles not listed follow in the tracker's order
+                order = list(dict.fromkeys(m for m in args["order"] if m in ids))
+                race.manual_order = order or None
+                detail = {"order": order}
+            elif action == "confirm":
+                race.confirmed = bool(args.get("confirmed", True))
+                detail = {"confirmed": race.confirmed}
+            elif action == "freeze":
+                self.frozen = bool(args.get("on", True))
+                detail = {"on": self.frozen}
+            elif action == "hide":
+                self.hidden = bool(args.get("on", True))
+                detail = {"on": self.hidden}
+            else:
+                raise ValueError(f"unknown action {action}")
+            self._next_pub = 0.0  # publish the change at once
+        self._event("operator", {"action": action, "race_id": race.id, **detail})
+        return detail
+
     def _result(self, race: RaceSession) -> dict:
         return {"race_id": race.id, "state": race.state, "board": self._board(race)}
 
@@ -319,7 +356,9 @@ class Runtime:
                 self._next_pub = now + self._publish_every
                 self.board = self._board(race)
                 data = {"race_id": race.id, "state": race.state, "clock": self.clock(race, now),
-                        "late": race.late, "board": self.board}
+                        "late": race.late, "board": self.board,
+                        "result": "confirmed" if race.confirmed else "provisional",
+                        "frozen": self.frozen, "hidden": self.hidden}
                 if self.session_log is not None:
                     self.session_log.board(now, data)
                 self._event("board", data, log=False)
@@ -396,13 +435,20 @@ class Runtime:
     def _board(self, race: RaceSession) -> list[dict]:
         out = []
         colors = {m.id: m for m in self.project.marbles}
-        for e in race.engine.leaderboard():
+        entries = race.engine.leaderboard()
+        if race.manual_order:
+            pos = {mid: k for k, mid in enumerate(race.manual_order)}
+            listed = sorted((e for e in entries if e.marble_id in pos), key=lambda e: pos[e.marble_id])
+            entries = listed + [e for e in entries if e.marble_id not in pos]
+            entries = [replace(e, rank=k + 1) for k, e in enumerate(entries)]
+        for e in entries:
             d = asdict(e)
             m = colors.get(e.marble_id)
             d["name"], d["color"] = (m.name, m.color) if m else (e.marble_id, "#888888")
             if e.finish_time is not None and race.t0 is not None:
                 d["finish_time"] = round(e.finish_time - race.t0, 4)
             d["progress_m"], d["speed_mps"], d["gap_m"] = round(d["progress_m"], 3), round(d["speed_mps"], 3), round(d["gap_m"], 3)
+            d["manual"] = bool(race.manual_order and e.marble_id in race.manual_order)
             out.append(d)
         return out
 
@@ -420,6 +466,8 @@ class Runtime:
     def status(self) -> dict:
         with self.lock:
             race = self.race
-            return {"race": {"id": race.id, "state": race.state, "clock": self.clock(race, self.now()), "late": race.late},
+            return {"race": {"id": race.id, "state": race.state, "clock": self.clock(race, self.now()), "late": race.late,
+                             "confirmed": race.confirmed, "manual": bool(race.manual_order)},
+                    "frozen": self.frozen, "hidden": self.hidden,
                     "board": self.board, "cameras": self.cam_state, "log": list(self.log)[:60],
                     "history": list(self.history)[:5]}
