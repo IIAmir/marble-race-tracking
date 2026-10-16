@@ -109,8 +109,6 @@ def build_scene(course: Course, seed: int = 0, grid: float = 0.025) -> Scene:
     tree_all = cKDTree(P[sub, :2])
     d_all, i_all = tree_all.query(pts)
     i_all = i_all * 2
-    z_tr = P[i_all, 2]
-    half = W[i_all] / 2 + WALL_T
     # embankment: the mountain carries the track (not under the tower). Taken as the highest
     # support of ALL passes (not just the nearest), so the terrain stays continuous between them.
     samp = np.arange(0, len(s), 4)
@@ -283,7 +281,7 @@ def build_scene(course: Course, seed: int = 0, grid: float = 0.025) -> Scene:
         d_ = Pl + 0.035 * Ll + 0.07 * Ul
         mesh.quads(c_[:-1], c_[1:], d_[1:], d_[:-1], TOWER)
     rk = course.rack
-    base, out, along = np.asarray(rk["base"]), np.asarray(rk["out"]), np.asarray(rk["along"])
+    base, out = np.asarray(rk["base"]), np.asarray(rk["out"])
     side = np.cross([0.0, 0.0, 1.0], out)
     gz = float(height(base[0], base[1]))
     hgt = 10 * (2 * BALL_R + 0.001) + 0.03

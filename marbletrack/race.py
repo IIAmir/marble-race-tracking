@@ -10,6 +10,7 @@ import numpy as np
 
 from .detector import ColorDetector
 from .fusion import FusionEngine, ReorderBuffer
+from .scoring import Scorer
 from .sim import (
     DEFAULT_MARBLES,
     RaceConfig,
@@ -168,102 +169,32 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
     arrivals = []  # (arrival time, capture time, cam_id, detections)
     det_time = fuse_time = 0.0
     n_det = n_batches = 0
-    ok_instants = ok_all_instants = total_instants = 0
-    sq_err, n_err, id_errors = 0.0, 0, 0
     tie = 4 * cfg.marble_radius  # two diameters: closer than this counts as a tie
     replay = ({"t": [], "truth": [], "lat": [], "est": [], "v": [], "obs_s": [], "obs_cam": [], "color": [], "status": [],
                "order": [], "cams": []} if record else None)
     cam_index = {c.cam_id: k for k, c in enumerate(cams)}
 
-    truth_hist = []  # (t, truth) of recent evaluations, for the display-latency budget
-    prev_order = None
-    ok_lat_instants = phantom = shown = 0
-    latency_budget = 0.1
+    def record(t, board, truth):
+        if replay is None:
+            return
+        est = {e.marble_id: e for e in board}
+        replay["t"].append(round(t, 4))
+        replay["truth"].append([round(float(v), 4) for v in truth])
+        replay["est"].append([round(est[i].progress_m, 4) for i in ids])
+        replay["lat"].append([round(float(v), 4) for v in sim.lateral(t)])
+        replay["v"].append([round(est[i].speed_mps, 3) for i in ids])
+        replay["obs_s"].append([None if m.last_obs_s is None else round(m.last_obs_s, 4) for m in engine.marbles])
+        replay["obs_cam"].append([cam_index.get(m.last_obs_cam, -1) for m in engine.marbles])
+        replay["color"].append([[round(m.last_color[0], 1), round(min(m.last_color[1], 9999.0), 1)]
+                                for m in engine.marbles])
+        replay["status"].append([est[i].status for i in ids])
+        replay["order"].append([ids.index(e.marble_id) for e in board])
+        replay["cams"].append([int(v) for v in engine.camera_status().values()])
 
-    def ahead(i, j, truth):
-        """Is i genuinely ahead of j (or level within the tie tolerance)?"""
-        fi, fj = truth_finish[i], truth_finish[j]
-        if np.isfinite(fi) and np.isfinite(fj) and truth[i] >= cfg_finish and truth[j] >= cfg_finish:
-            return fi <= fj
-        return truth[i] >= truth[j] - tie
-
-    cfg_finish = L - cfg.finish_before_end
+    scorer = Scorer(ids, sim.progress, truth_finish, L - cfg.finish_before_end, tie, on_eval=record)
 
     def evaluate(t):
-        nonlocal ok_instants, ok_all_instants, total_instants, sq_err, n_err, id_errors
-        nonlocal ok_lat_instants, phantom, shown, prev_order
-        board = engine.leaderboard(t)
-        truth = sim.progress(t)
-        truth_hist.append((t, truth))
-        while truth_hist and truth_hist[0][0] < t - latency_budget - 1e-9:
-            truth_hist.pop(0)
-        # Phantom overtakes: every displayed pass must match the track at that moment
-        # (or within the display budget).
-        order = [ids.index(e.marble_id) for e in board]
-        status_now = {ids.index(e.marble_id): e.status for e in board}
-        if prev_order is not None:
-            pos0 = {m: k for k, m in enumerate(prev_order)}
-            for k, x in enumerate(order):
-                for y in order[k + 1:]:
-                    if pos0[x] > pos0[y] and "unseen" not in (status_now[x], status_now[y]):
-                        shown += 1
-                        if not any(ahead(x, y, tr) for _, tr in truth_hist):
-                            phantom += 1
-                            if _DEBUG:
-                                ex = next(e for e in board if e.marble_id == ids[x])
-                                ey = next(e for e in board if e.marble_id == ids[y])
-                                print(f"[phantom] t={t:.3f} {ids[x]}({status_now[x]}, est {ex.progress_m:.3f}, true {truth[x]:.3f}) "
-                                      f"passed {ids[y]}({status_now[y]}, est {ey.progress_m:.3f}, true {truth[y]:.3f})")
-        prev_order = order
-        ok = ok_all = True
-        ok_lat = True
-        seen = [e for e in board if e.status in ("finished", "tracking")]
-        for pairs, visible_only in ((zip(seen, seen[1:]), True), (zip(board, board[1:]), False)):
-            for a, b in pairs:
-                ia, ib = ids.index(a.marble_id), ids.index(b.marble_id)
-                if a.status == "finished" and b.status == "finished":
-                    good = truth_finish[ia] <= truth_finish[ib] or (a.photo_finish and b.photo_finish)
-                elif b.status == "finished":
-                    good = False
-                elif "unseen" in (a.status, b.status):
-                    good = True  # before the first frame reaches the fusion host
-                else:
-                    good = truth[ia] >= truth[ib] - tie
-                if visible_only:
-                    if not good and _DEBUG:
-                        print(f"[rank] t={t:.3f} {a.marble_id}({a.status}) ahead of {b.marble_id}({b.status}) "
-                              f"truth {truth[ia]:.3f} vs {truth[ib]:.3f}")
-                    ok &= good
-                    if not good and not (a.status == "finished" and b.status == "finished"):
-                        good = any(ahead(ia, ib, tr) for _, tr in truth_hist)
-                    ok_lat &= good
-                else:
-                    ok_all &= good
-        ok_instants += ok
-        ok_all_instants += ok_all
-        ok_lat_instants += ok_lat
-        total_instants += 1
-        for e in board:
-            if e.status == "tracking":
-                err = e.progress_m - truth[ids.index(e.marble_id)]
-                sq_err += err**2
-                n_err += 1
-                id_errors += abs(err) > 0.15
-        if replay is not None:
-            est = {e.marble_id: e for e in board}
-            replay["t"].append(round(t, 4))
-            replay["truth"].append([round(float(v), 4) for v in truth])
-            replay["est"].append([round(est[i].progress_m, 4) for i in ids])
-            replay["lat"].append([round(float(v), 4) for v in sim.lateral(t)])
-            replay["v"].append([round(est[i].speed_mps, 3) for i in ids])
-            replay["obs_s"].append([None if m.last_obs_s is None else round(m.last_obs_s, 4) for m in engine.marbles])
-            replay["obs_cam"].append([cam_index.get(m.last_obs_cam, -1) for m in engine.marbles])
-            replay["color"].append([[round(m.last_color[0], 1), round(min(m.last_color[1], 9999.0), 1)]
-                                    for m in engine.marbles])
-            replay["status"].append([est[i].status for i in ids])
-            replay["order"].append([ids.index(e.marble_id) for e in board])
-            replay["cams"].append([int(v) for v in engine.camera_status().values()])
-        return board
+        return scorer.evaluate(engine, t)
 
     last_eval = -1.0
     for t, k in events:
@@ -301,15 +232,8 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
         n_batches += 1
     board = evaluate(engine.now)
 
-    truth_order = [ids[i] for i in np.argsort(truth_finish)]
-    official_ok = all(
-        truth_finish[ids.index(a.marble_id)] <= truth_finish[ids.index(b.marble_id)]
-        or (a.photo_finish and b.photo_finish)
-        for a, b in zip(board, board[1:])
-    ) and all(e.status == "finished" or not np.isfinite(truth_finish[ids.index(e.marble_id)]) for e in board)
+    res = scorer.final(board)
     est = {e.marble_id: e.finish_time for e in board}
-    errs = np.array([abs(est[i] - truth_finish[ids.index(i)]) * 1e3 if est[i] is not None else
-                     (0.0 if not np.isfinite(truth_finish[ids.index(i)]) else np.inf) for i in ids])
     if replay is not None:
         replay.update(
             ids=ids,
@@ -339,23 +263,10 @@ def run_race(mode: str = "single", seed: int = 0, fps: float = 30.0,
         seed=seed,
         n_cameras=len(cams),
         frames=n_det,
-        rank_accuracy=ok_instants / max(1, total_instants),
-        rank_accuracy_all=ok_all_instants / max(1, total_instants),
-        rank_accuracy_latency=ok_lat_instants / max(1, total_instants),
-        phantom_overtakes=phantom,
-        overtakes_shown=shown,
-        final_order_correct=official_ok,
-        final_order_strict=[e.marble_id for e in board] == truth_order,
-        photo_finishes=sum(e.photo_finish for e in board),
-        finish_err_ms_mean=float(errs.mean()),
-        finish_err_ms_max=float(errs.max()),
-        pos_err_cm_rms=float(np.sqrt(sq_err / max(1, n_err)) * 100),
-        id_errors=int(id_errors),
         late_batches=buf.late,
         detect_ms_per_frame=det_time / max(1, n_det) * 1e3,
         fuse_ms_per_batch=fuse_time / max(1, n_batches) * 1e3,
-        truth_order=truth_order,
-        final_order=[e.marble_id for e in board],
         events=[(round(e.t, 3), e.kind, e.subject) for e in engine.events],
         replay=replay,
+        **res,
     )

@@ -265,7 +265,6 @@ class VenueCamera:
 
     def _spinners(self, t):
         """Rotating spinners in view: each arm is a chain of small spheres (a capsule), the hub a sphere."""
-        o = self.optics
         out = []
         for sp_s, sp_u, ln, n, w, ph in self.course.obstacles.spinners:
             P, T, L, U, _ = self.course.frame(np.array([sp_s]))
