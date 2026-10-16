@@ -1,0 +1,1029 @@
+{
+ "summary": [
+  {
+   "scenario": "venue",
+   "description": "One lap, the recommended ball set (9 replaced by a pink ball).",
+   "races": 7,
+   "official_order_correct": 7,
+   "rack_matches_board": 7,
+   "rank_accuracy_visible_mean": 0.9964559972139726,
+   "rank_accuracy_visible_min": 0.9869942196531792,
+   "rank_accuracy_latency_min": 0.98747591522158,
+   "phantom_overtakes_total": 31,
+   "overtakes_shown_total": 628,
+   "id_errors_total": 86,
+   "finish_err_ms_max": 9.22264259580885,
+   "pos_err_cm_rms_mean": 4.773216605647829
+  }
+ ],
+ "runs": [
+  {
+   "scenario": "venue",
+   "seed": 1,
+   "rank_accuracy": 0.9973070017953322,
+   "rank_accuracy_latency": 0.9973070017953322,
+   "phantom_overtakes": 1,
+   "overtakes_shown": 63,
+   "id_errors": 3,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 0,
+   "finish_err_ms_mean": 1.459183627471461,
+   "finish_err_ms_max": 4.997770466452778,
+   "pos_err_cm_rms": 1.3069939170959861,
+   "rack_matches_board": true,
+   "n_issues": 7,
+   "frames": 32072,
+   "laps": 1,
+   "lap_m": 30.394976068865518,
+   "wall_s": 13.111506462097168,
+   "truth_order": [
+    "b9",
+    "b1",
+    "b2",
+    "b3",
+    "b5",
+    "b8",
+    "b7",
+    "b6",
+    "b4",
+    "b0"
+   ],
+   "final_order": [
+    "b9",
+    "b1",
+    "b2",
+    "b3",
+    "b5",
+    "b8",
+    "b7",
+    "b6",
+    "b4",
+    "b0"
+   ],
+   "rack_order": [
+    "b9",
+    "b1",
+    "b2",
+    "b3",
+    "b5",
+    "b8",
+    "b7",
+    "b6",
+    "b4",
+    "b0"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     21.609,
+     "phantom",
+     "b5(tracking, est 17.173, true 16.622) passed b1(tracking, est 17.087, true 17.089)"
+    ],
+    [
+     21.609,
+     "rank",
+     "b5(tracking) ahead of b1(tracking) truth 16.622 vs 17.089"
+    ],
+    [
+     21.609,
+     "identity",
+     "b5 est 17.173 true 16.622"
+    ],
+    [
+     21.643,
+     "rank",
+     "b5(tracking) ahead of b1(tracking) truth 16.632 vs 17.107"
+    ],
+    [
+     21.643,
+     "identity",
+     "b5 est 17.197 true 16.632"
+    ],
+    [
+     21.676,
+     "rank",
+     "b5(tracking) ahead of b1(tracking) truth 16.640 vs 17.126"
+    ],
+    [
+     21.676,
+     "identity",
+     "b5 est 17.220 true 16.640"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 2,
+   "rank_accuracy": 0.9869942196531792,
+   "rank_accuracy_latency": 0.98747591522158,
+   "phantom_overtakes": 7,
+   "overtakes_shown": 113,
+   "id_errors": 35,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 0,
+   "finish_err_ms_mean": 2.273055804466395,
+   "finish_err_ms_max": 3.3960991359620607,
+   "pos_err_cm_rms": 15.476555943263111,
+   "rack_matches_board": true,
+   "n_issues": 69,
+   "frames": 55700,
+   "laps": 1,
+   "lap_m": 33.13725728060558,
+   "wall_s": 21.451783418655396,
+   "truth_order": [
+    "b5",
+    "b0",
+    "b1",
+    "b7",
+    "b6",
+    "b4",
+    "b2",
+    "b8",
+    "b9",
+    "b3"
+   ],
+   "final_order": [
+    "b5",
+    "b0",
+    "b1",
+    "b7",
+    "b6",
+    "b4",
+    "b2",
+    "b8",
+    "b9",
+    "b3"
+   ],
+   "rack_order": [
+    "b5",
+    "b0",
+    "b1",
+    "b7",
+    "b6",
+    "b4",
+    "b2",
+    "b8",
+    "b9",
+    "b3"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     23.998,
+     "rank",
+     "b0(tracking) ahead of b2(tracking) truth 14.775 vs 14.835"
+    ],
+    [
+     40.08,
+     "phantom",
+     "b8(tracking, est 21.134, true 19.839) passed b1(tracking, est 21.102, true 21.105)"
+    ],
+    [
+     40.08,
+     "phantom",
+     "b8(tracking, est 21.134, true 19.839) passed b7(lost, est 20.852, true 20.674)"
+    ],
+    [
+     40.08,
+     "phantom",
+     "b8(tracking, est 21.134, true 19.839) passed b2(tracking, est 20.089, true 20.083)"
+    ],
+    [
+     40.08,
+     "phantom",
+     "b8(tracking, est 21.134, true 19.839) passed b4(tracking, est 20.036, true 20.044)"
+    ],
+    [
+     40.08,
+     "phantom",
+     "b8(tracking, est 21.134, true 19.839) passed b9(tracking, est 19.974, true 19.972)"
+    ],
+    [
+     40.08,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.839 vs 21.105"
+    ],
+    [
+     40.08,
+     "identity",
+     "b8 est 21.134 true 19.839"
+    ],
+    [
+     40.114,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.850 vs 21.116"
+    ],
+    [
+     40.114,
+     "identity",
+     "b8 est 21.138 true 19.850"
+    ],
+    [
+     40.148,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.861 vs 21.127"
+    ],
+    [
+     40.148,
+     "identity",
+     "b8 est 21.144 true 19.861"
+    ],
+    [
+     40.181,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.873 vs 21.137"
+    ],
+    [
+     40.181,
+     "identity",
+     "b8 est 21.160 true 19.873"
+    ],
+    [
+     40.215,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.886 vs 21.147"
+    ],
+    [
+     40.215,
+     "identity",
+     "b8 est 21.171 true 19.886"
+    ],
+    [
+     40.249,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.892 vs 21.158"
+    ],
+    [
+     40.249,
+     "identity",
+     "b8 est 21.181 true 19.892"
+    ],
+    [
+     40.282,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.888 vs 21.169"
+    ],
+    [
+     40.282,
+     "identity",
+     "b8 est 21.188 true 19.888"
+    ],
+    [
+     40.316,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.884 vs 21.180"
+    ],
+    [
+     40.316,
+     "identity",
+     "b8 est 21.195 true 19.884"
+    ],
+    [
+     40.35,
+     "rank",
+     "b8(tracking) ahead of b1(tracking) truth 19.881 vs 21.192"
+    ],
+    [
+     40.35,
+     "identity",
+     "b8 est 21.203 true 19.881"
+    ],
+    [
+     43.933,
+     "phantom",
+     "b8(tracking, est 23.911, true 20.824) passed b7(tracking, est 22.509, true 22.513)"
+    ],
+    [
+     43.933,
+     "rank",
+     "b8(tracking) ahead of b7(tracking) truth 20.824 vs 22.513"
+    ],
+    [
+     43.933,
+     "identity",
+     "b8 est 23.911 true 20.824"
+    ],
+    [
+     43.967,
+     "rank",
+     "b8(tracking) ahead of b7(tracking) truth 20.825 vs 22.542"
+    ],
+    [
+     43.967,
+     "identity",
+     "b8 est 23.948 true 20.825"
+    ],
+    [
+     44.001,
+     "phantom",
+     "b8(tracking, est 23.985, true 20.825) passed b1(acquiring, est 23.887, true 23.899)"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 3,
+   "rank_accuracy": 0.9993201903467029,
+   "rank_accuracy_latency": 1.0,
+   "phantom_overtakes": 0,
+   "overtakes_shown": 82,
+   "id_errors": 0,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 6,
+   "finish_err_ms_mean": 2.7147667192444658,
+   "finish_err_ms_max": 9.22264259580885,
+   "pos_err_cm_rms": 0.6183257020064061,
+   "rack_matches_board": true,
+   "n_issues": 1,
+   "frames": 36461,
+   "laps": 1,
+   "lap_m": 35.441881894707315,
+   "wall_s": 16.924094676971436,
+   "truth_order": [
+    "b8",
+    "b7",
+    "b6",
+    "b2",
+    "b3",
+    "b1",
+    "b0",
+    "b5",
+    "b4",
+    "b9"
+   ],
+   "final_order": [
+    "b8",
+    "b7",
+    "b6",
+    "b2",
+    "b3",
+    "b1",
+    "b0",
+    "b5",
+    "b4",
+    "b9"
+   ],
+   "rack_order": [
+    "b8",
+    "b7",
+    "b6",
+    "b2",
+    "b3",
+    "b1",
+    "b0",
+    "b5",
+    "b4",
+    "b9"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     14.385,
+     "rank",
+     "b3(tracking) ahead of b8(tracking) truth 8.854 vs 8.905"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 4,
+   "rank_accuracy": 0.99328165374677,
+   "rank_accuracy_latency": 0.9943152454780362,
+   "phantom_overtakes": 6,
+   "overtakes_shown": 89,
+   "id_errors": 11,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 0,
+   "finish_err_ms_mean": 1.740316736127312,
+   "finish_err_ms_max": 3.2717026533433113,
+   "pos_err_cm_rms": 1.3277312954759126,
+   "rack_matches_board": true,
+   "n_issues": 30,
+   "frames": 55712,
+   "laps": 1,
+   "lap_m": 37.77787356242697,
+   "wall_s": 23.29429578781128,
+   "truth_order": [
+    "b2",
+    "b1",
+    "b8",
+    "b9",
+    "b7",
+    "b0",
+    "b3",
+    "b5",
+    "b6",
+    "b4"
+   ],
+   "final_order": [
+    "b2",
+    "b1",
+    "b8",
+    "b9",
+    "b7",
+    "b0",
+    "b3",
+    "b5",
+    "b6",
+    "b4"
+   ],
+   "rack_order": [
+    "b2",
+    "b1",
+    "b8",
+    "b9",
+    "b7",
+    "b0",
+    "b3",
+    "b5",
+    "b6",
+    "b4"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     13.43,
+     "phantom",
+     "b0(tracking, est 10.964, true 10.532) passed b2(tracking, est 10.813, true 10.808)"
+    ],
+    [
+     13.43,
+     "rank",
+     "b0(tracking) ahead of b2(tracking) truth 10.532 vs 10.808"
+    ],
+    [
+     13.43,
+     "identity",
+     "b0 est 10.964 true 10.532"
+    ],
+    [
+     13.464,
+     "rank",
+     "b0(tracking) ahead of b2(tracking) truth 10.566 vs 10.796"
+    ],
+    [
+     13.464,
+     "identity",
+     "b0 est 10.982 true 10.566"
+    ],
+    [
+     13.5,
+     "phantom",
+     "b0(tracking, est 11.001, true 10.603) passed b9(tracking, est 10.951, true 10.973)"
+    ],
+    [
+     13.5,
+     "rank",
+     "b0(tracking) ahead of b9(tracking) truth 10.603 vs 10.973"
+    ],
+    [
+     13.5,
+     "identity",
+     "b0 est 11.001 true 10.603"
+    ],
+    [
+     16.325,
+     "rank",
+     "b3(tracking) ahead of b2(tracking) truth 11.583 vs 11.642"
+    ],
+    [
+     29.44,
+     "rank",
+     "b9(tracking) ahead of b3(tracking) truth 22.614 vs 22.738"
+    ],
+    [
+     29.473,
+     "rank",
+     "b9(tracking) ahead of b3(tracking) truth 22.617 vs 22.752"
+    ],
+    [
+     29.507,
+     "rank",
+     "b9(tracking) ahead of b3(tracking) truth 22.621 vs 22.767"
+    ],
+    [
+     37.398,
+     "phantom",
+     "b8(tracking, est 27.486, true 27.479) passed b3(tracking, est 27.398, true 27.622)"
+    ],
+    [
+     37.398,
+     "phantom",
+     "b1(tracking, est 27.475, true 27.465) passed b3(tracking, est 27.398, true 27.622)"
+    ],
+    [
+     37.398,
+     "rank",
+     "b1(tracking) ahead of b3(tracking) truth 27.465 vs 27.622"
+    ],
+    [
+     37.398,
+     "identity",
+     "b3 est 27.398 true 27.622"
+    ],
+    [
+     37.433,
+     "rank",
+     "b1(tracking) ahead of b3(tracking) truth 27.481 vs 27.607"
+    ],
+    [
+     37.433,
+     "identity",
+     "b3 est 27.434 true 27.607"
+    ],
+    [
+     37.468,
+     "rank",
+     "b1(tracking) ahead of b3(tracking) truth 27.498 vs 27.594"
+    ],
+    [
+     37.502,
+     "rank",
+     "b1(tracking) ahead of b3(tracking) truth 27.514 vs 27.581"
+    ],
+    [
+     38.297,
+     "rank",
+     "b9(tracking) ahead of b1(tracking) truth 27.848 vs 27.907"
+    ],
+    [
+     46.102,
+     "phantom",
+     "b7(tracking, est 29.440, true 29.443) passed b8(lost, est 28.905, true 29.898)"
+    ],
+    [
+     48.609,
+     "identity",
+     "b3 est 28.990 true 29.206"
+    ],
+    [
+     48.644,
+     "identity",
+     "b3 est 29.018 true 29.208"
+    ],
+    [
+     48.678,
+     "identity",
+     "b3 est 29.044 true 29.210"
+    ],
+    [
+     53.408,
+     "identity",
+     "b3 est 30.540 true 30.764"
+    ],
+    [
+     53.444,
+     "identity",
+     "b3 est 30.546 true 30.790"
+    ],
+    [
+     53.478,
+     "phantom",
+     "b5(tracking, est 30.590, true 30.598) passed b3(tracking, est 30.539, true 30.814)"
+    ],
+    [
+     53.478,
+     "rank",
+     "b5(tracking) ahead of b3(tracking) truth 30.598 vs 30.814"
+    ],
+    [
+     53.478,
+     "identity",
+     "b3 est 30.539 true 30.814"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 5,
+   "rank_accuracy": 0.9988472622478386,
+   "rank_accuracy_latency": 1.0,
+   "phantom_overtakes": 13,
+   "overtakes_shown": 103,
+   "id_errors": 24,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 2,
+   "finish_err_ms_mean": 0.5754717537236331,
+   "finish_err_ms_max": 2.0350086128075873,
+   "pos_err_cm_rms": 6.143755067205035,
+   "rack_matches_board": true,
+   "n_issues": 39,
+   "frames": 50003,
+   "laps": 1,
+   "lap_m": 31.12948753083485,
+   "wall_s": 20.14945697784424,
+   "truth_order": [
+    "b7",
+    "b3",
+    "b6",
+    "b8",
+    "b4",
+    "b2",
+    "b5",
+    "b1",
+    "b0",
+    "b9"
+   ],
+   "final_order": [
+    "b7",
+    "b3",
+    "b6",
+    "b8",
+    "b4",
+    "b2",
+    "b5",
+    "b1",
+    "b0",
+    "b9"
+   ],
+   "rack_order": [
+    "b7",
+    "b3",
+    "b6",
+    "b8",
+    "b4",
+    "b2",
+    "b5",
+    "b1",
+    "b0",
+    "b9"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     29.333,
+     "phantom",
+     "b3(tracking, est 12.394, true 12.381) passed b5(lost, est 11.375, true 13.374)"
+    ],
+    [
+     31.191,
+     "identity",
+     "b6 est 13.440 true 12.222"
+    ],
+    [
+     31.225,
+     "identity",
+     "b6 est 13.468 true 12.251"
+    ],
+    [
+     31.259,
+     "identity",
+     "b6 est 13.507 true 12.279"
+    ],
+    [
+     31.295,
+     "identity",
+     "b6 est 13.537 true 12.309"
+    ],
+    [
+     31.329,
+     "identity",
+     "b6 est 13.571 true 12.338"
+    ],
+    [
+     31.364,
+     "identity",
+     "b6 est 13.595 true 12.366"
+    ],
+    [
+     31.398,
+     "identity",
+     "b6 est 13.620 true 12.395"
+    ],
+    [
+     31.433,
+     "identity",
+     "b6 est 13.644 true 12.424"
+    ],
+    [
+     34.079,
+     "phantom",
+     "b6(tracking, est 14.707, true 14.709) passed b8(lost, est 14.651, true 15.549)"
+    ],
+    [
+     34.214,
+     "phantom",
+     "b4(tracking, est 14.718, true 14.717) passed b8(lost, est 14.650, true 15.700)"
+    ],
+    [
+     34.761,
+     "phantom",
+     "b2(tracking, est 14.689, true 14.697) passed b8(lost, est 14.651, true 16.360)"
+    ],
+    [
+     35.003,
+     "phantom",
+     "b1(tracking, est 14.694, true 14.700) passed b8(lost, est 14.652, true 16.677)"
+    ],
+    [
+     36.42,
+     "rank",
+     "b5(tracking) ahead of b7(tracking) truth 20.972 vs 21.049"
+    ],
+    [
+     37.656,
+     "identity",
+     "b9 est 13.445 true 12.225"
+    ],
+    [
+     37.691,
+     "identity",
+     "b9 est 13.472 true 12.254"
+    ],
+    [
+     37.725,
+     "identity",
+     "b9 est 13.510 true 12.283"
+    ],
+    [
+     37.759,
+     "identity",
+     "b9 est 13.543 true 12.311"
+    ],
+    [
+     37.759,
+     "identity",
+     "b0 est 13.442 true 12.222"
+    ],
+    [
+     37.796,
+     "identity",
+     "b9 est 13.576 true 12.342"
+    ],
+    [
+     37.796,
+     "identity",
+     "b0 est 13.467 true 12.254"
+    ],
+    [
+     37.83,
+     "identity",
+     "b9 est 13.605 true 12.370"
+    ],
+    [
+     37.83,
+     "identity",
+     "b0 est 13.505 true 12.283"
+    ],
+    [
+     37.863,
+     "identity",
+     "b9 est 13.633 true 12.399"
+    ],
+    [
+     37.863,
+     "identity",
+     "b0 est 13.540 true 12.312"
+    ],
+    [
+     37.897,
+     "identity",
+     "b9 est 13.661 true 12.427"
+    ],
+    [
+     37.897,
+     "identity",
+     "b0 est 13.573 true 12.341"
+    ],
+    [
+     37.932,
+     "identity",
+     "b0 est 13.599 true 12.371"
+    ],
+    [
+     37.966,
+     "identity",
+     "b0 est 13.624 true 12.400"
+    ],
+    [
+     38.003,
+     "identity",
+     "b0 est 13.651 true 12.432"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 6,
+   "rank_accuracy": 1.0,
+   "rank_accuracy_latency": 1.0,
+   "phantom_overtakes": 1,
+   "overtakes_shown": 79,
+   "id_errors": 5,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 0,
+   "finish_err_ms_mean": 2.3708637055584347,
+   "finish_err_ms_max": 3.563556630176379,
+   "pos_err_cm_rms": 2.6076008443355536,
+   "rack_matches_board": true,
+   "n_issues": 6,
+   "frames": 50528,
+   "laps": 1,
+   "lap_m": 29.72316491708285,
+   "wall_s": 16.60396909713745,
+   "truth_order": [
+    "b0",
+    "b1",
+    "b3",
+    "b4",
+    "b6",
+    "b2",
+    "b5",
+    "b7",
+    "b8",
+    "b9"
+   ],
+   "final_order": [
+    "b0",
+    "b1",
+    "b3",
+    "b4",
+    "b6",
+    "b2",
+    "b5",
+    "b7",
+    "b8",
+    "b9"
+   ],
+   "rack_order": [
+    "b0",
+    "b1",
+    "b3",
+    "b4",
+    "b6",
+    "b2",
+    "b5",
+    "b7",
+    "b8",
+    "b9"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     22.711,
+     "identity",
+     "b4 est 8.960 true 8.663"
+    ],
+    [
+     22.744,
+     "identity",
+     "b4 est 9.227 true 8.691"
+    ],
+    [
+     29.098,
+     "identity",
+     "b9 est 10.428 true 11.623"
+    ],
+    [
+     29.132,
+     "identity",
+     "b9 est 10.437 true 11.653"
+    ],
+    [
+     29.167,
+     "identity",
+     "b9 est 10.446 true 11.684"
+    ],
+    [
+     54.427,
+     "phantom",
+     "b9(tracking, est 23.087, true 23.094) passed b8(lost, est 23.048, true 23.694)"
+    ]
+   ],
+   "cameras": []
+  },
+  {
+   "scenario": "venue",
+   "seed": 7,
+   "rank_accuracy": 0.9994416527079844,
+   "rank_accuracy_latency": 1.0,
+   "phantom_overtakes": 3,
+   "overtakes_shown": 99,
+   "id_errors": 8,
+   "final_order_correct": true,
+   "final_order_strict": true,
+   "photo_finishes": 0,
+   "finish_err_ms_mean": 4.601237429971405,
+   "finish_err_ms_max": 7.624525137494231,
+   "pos_err_cm_rms": 5.931553470152794,
+   "rack_matches_board": true,
+   "n_issues": 12,
+   "frames": 51603,
+   "laps": 1,
+   "lap_m": 38.34974711295632,
+   "wall_s": 19.292871713638306,
+   "truth_order": [
+    "b4",
+    "b2",
+    "b8",
+    "b3",
+    "b0",
+    "b5",
+    "b1",
+    "b7",
+    "b6",
+    "b9"
+   ],
+   "final_order": [
+    "b4",
+    "b2",
+    "b8",
+    "b3",
+    "b0",
+    "b5",
+    "b1",
+    "b7",
+    "b6",
+    "b9"
+   ],
+   "rack_order": [
+    "b4",
+    "b2",
+    "b8",
+    "b3",
+    "b0",
+    "b5",
+    "b1",
+    "b7",
+    "b6",
+    "b9"
+   ],
+   "coverage": {},
+   "issues": [
+    [
+     16.427,
+     "phantom",
+     "b3(tracking, est 10.928, true 10.906) passed b8(lost, est 10.851, true 11.398)"
+    ],
+    [
+     16.734,
+     "phantom",
+     "b0(tracking, est 10.913, true 10.900) passed b8(lost, est 10.849, true 11.668)"
+    ],
+    [
+     24.608,
+     "rank",
+     "b2(tracking) ahead of b1(tracking) truth 19.187 vs 19.243"
+    ],
+    [
+     33.1,
+     "identity",
+     "b4 est 22.931 true 20.737"
+    ],
+    [
+     33.134,
+     "identity",
+     "b4 est 22.959 true 20.756"
+    ],
+    [
+     33.168,
+     "identity",
+     "b4 est 22.989 true 20.775"
+    ],
+    [
+     33.203,
+     "identity",
+     "b4 est 23.010 true 20.795"
+    ],
+    [
+     33.236,
+     "identity",
+     "b4 est 23.032 true 20.815"
+    ],
+    [
+     33.27,
+     "identity",
+     "b4 est 23.063 true 20.835"
+    ],
+    [
+     33.304,
+     "identity",
+     "b4 est 23.096 true 20.856"
+    ],
+    [
+     33.34,
+     "identity",
+     "b4 est 23.128 true 20.878"
+    ],
+    [
+     41.35,
+     "phantom",
+     "b3(tracking, est 27.488, true 27.494) passed b8(coasting, est 27.994, true 28.198)"
+    ]
+   ],
+   "cameras": []
+  }
+ ],
+ "wall_time_s": 130.83941864967346
+}
