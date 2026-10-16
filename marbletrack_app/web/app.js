@@ -735,6 +735,11 @@ VIEWS.server = {
         </div>
         <div class="row"><button class="btn" id="test">Test connection</button><span id="tres" class="hint" aria-live="polite"></span></div>
       </div>
+      <div class="card stack">
+        <label class="toggle"><input type="checkbox" id="ren" ${S.st.project.record.enabled ? "checked" : ""}> Record every camera while live</label>
+        <small class="hint">For checking the tracker on real races: every frame of every camera, the leaderboards that went out and all events are saved, and <code>python -m marbletrack_app.replay &lt;folder&gt;</code> runs the tracker again on them. About 0.5–1 GB per camera per minute.</small>
+        <label class="field"><span>Recordings folder</span><input class="input" id="rdir" value="${esc(S.st.project.record.folder)}" placeholder="recordings, inside this map's folder" spellcheck="false"></label>
+      </div>
       <details class="more card"><summary>${I.chev}What gets sent</summary><div><pre class="hint" style="white-space:pre-wrap;font:12px var(--mono);margin:0">{"schema":"marbletrack.v1","type":"leaderboard","station_id":"track-1","seq":412,
  "sent_at":"2026-10-14T18:03:22.481Z","race_id":"3f2a…","race_state":"running","race_time":12.418,
  "board":[{"rank":1,"marble_id":"ruby","name":"Ruby","color":"#d72a2d","status":"tracking",
@@ -755,6 +760,8 @@ VIEWS.server = {
       const r = await api("test_vmix", {}, { mutates: false });
       $("#vres").innerHTML = r.ok ? `<span class="chip ok">${I.check}${esc(r.detail)}</span>` : `<span class="chip bad">Failed</span> ${esc(r.detail)}`;
     });
+    $("#ren", el).onchange = (e) => api("update_record", { enabled: e.target.checked });
+    $("#rdir", el).onchange = (e) => api("update_record", { folder: e.target.value });
     const set = (k, v) => api("update_server", { [k]: v });
     $("#sen", el).onchange = (e) => { set("enabled", e.target.checked); $("#sform").style.opacity = e.target.checked ? 1 : 0.5; };
     $("#sform").style.opacity = s.enabled ? 1 : 0.5;

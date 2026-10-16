@@ -67,7 +67,7 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
     from marbletrack.detector import ColorDetector
 
     key = spec["key"]
-    src = None
+    src = recorder = None
     try:
         import os
         if spec.get("demo_pickle"):
@@ -87,6 +87,10 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
         if frame.shape[1] != w or frame.shape[0] != h:
             raise RuntimeError(f"camera now delivers {frame.shape[1]}x{frame.shape[0]} but was set up at {w}x{h}: redo its setup")
         det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)))
+        if spec.get("record_dir"):
+            from .recording import FrameRecorder
+
+            recorder = FrameRecorder(spec["record_dir"], key, spec["fps"], spec.get("record_quality", 92))
         out_q.put(("started", key, applied))
         latency = spec.get("latency_ms", 0.0) / 1000.0
         colors = [tuple(int(h[i:i + 2], 16) for i in (5, 3, 1)) for h in spec.get("colors", [])]  # #rrggbb -> BGR
@@ -107,6 +111,8 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
                 time.sleep(0.01)
                 continue
             t = t_cap - t0 - latency
+            if recorder is not None:
+                recorder.add(frame, t_cap - t0, time.perf_counter() - t0)
             start = time.perf_counter()
             dets = det.detect(frame, t)
             busy += time.perf_counter() - start
@@ -138,6 +144,11 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
                 src.close()
             except Exception:
                 pass
+        if recorder is not None:
+            try:
+                out_q.put(("recorded", key, recorder.close()))
+            except Exception:
+                pass
 
 
 class RaceSession:
@@ -166,8 +177,15 @@ class RaceSession:
 class Runtime:
     """Owns the camera processes and the fusion thread while the app is live."""
 
-    def __init__(self, project: Project, backgrounds: dict, on_event=None, demo_pickles: dict | None = None):
+    def __init__(self, project: Project, backgrounds: dict, on_event=None, demo_pickles: dict | None = None,
+                 record_dir=None):
         self.project = project
+        self.record_dir = record_dir  # a session folder (recording.start_session) or None
+        self.session_log = None
+        if record_dir is not None:
+            from .recording import SessionLog
+
+            self.session_log = SessionLog(record_dir)
         self.on_event = on_event or (lambda kind, data: None)
         self.calibs = {}
         for cam in project.active_cameras:
@@ -194,6 +212,8 @@ class Runtime:
         self.thread = threading.Thread(target=self._fusion_loop, daemon=True, name="fusion")
         self._running = False
         self.history: deque = deque(maxlen=20)
+        self._publish_every = 1.0 / max(1.0, project.server.publish_hz)
+        self._next_pub = 0.0
 
     # -- lifecycle ----------------------------------------------------------------
     def start(self):
@@ -202,7 +222,9 @@ class Runtime:
             spec = dict(key=cam.key, backend=cam.backend, device=cam.device, width=cam.width, height=cam.height,
                         fps=cam.fps, auto_exposure=cam.auto_exposure, exposure=cam.exposure,
                         auto_white_balance=cam.auto_white_balance, latency_ms=cam.latency_ms, demo_pickle=self.demo_pickles.get(cam.key),
-                        colors=[m.color for m in self.project.marbles])
+                        colors=[m.color for m in self.project.marbles],
+                        record_dir=str(self.record_dir) if self.record_dir is not None else None,
+                        record_quality=self.project.record.jpeg_quality)
             cq = self.ctx.Queue()
             p = self.ctx.Process(target=camera_worker, name=f"cam-{cam.key}",
                                  args=(spec, pickle.dumps(self.calibs[cam.key]), self.t0, self.out_q, cq, self.stop_evt),
@@ -221,7 +243,20 @@ class Runtime:
                 p.terminate()
         if self.thread.is_alive():
             self.thread.join(timeout=3)
+        self._drain_recorded()
         self._event("tracking_stopped", {})
+        if self.session_log is not None:
+            self.session_log.close()
+
+    def _drain_recorded(self):
+        """Collect the camera processes' recording summaries (sent as they exit)."""
+        while True:
+            try:
+                msg = self.out_q.get(timeout=0.2)
+            except (queue.Empty, EOFError, OSError):
+                return
+            if msg[0] == "recorded":
+                self._handle(msg, self.now())
 
     def set_preview(self, key: str | None, focus_fps=12.0, focus_w=960, grid_fps=4.0, grid_w=400):
         for k, q in self.cmd_qs.items():
@@ -245,8 +280,6 @@ class Runtime:
 
     # -- fusion loop ----------------------------------------------------------------
     def _fusion_loop(self):
-        publish_every = 1.0 / max(1.0, self.project.server.publish_hz)
-        next_pub = 0.0
         while self._running:
             try:
                 msg = self.out_q.get(timeout=0.01)
@@ -254,30 +287,40 @@ class Runtime:
                 msg = None
             except (EOFError, OSError):
                 break
-            now = self.now()
-            if msg is not None:
-                self._handle(msg, now)
-            with self.lock:
-                race = self.race
-                for t, cam, dets in self.buf.pop_ready(now):
-                    race.engine.process(t, dets, cam)
-                    if dets:
-                        race.last_seen = t
-                race.engine.tick(now - self.buf.latency)
-                for ev in race.engine.events[race.n_events:]:
-                    if ev.kind in ("camera_offline", "camera_online"):
-                        self._event(ev.kind, {"camera": ev.subject, "name": self.cam_state.get(ev.subject, {}).get("name", ev.subject)})
-                race.n_events = len(race.engine.events)
-                self._race_logic(race, now)
-                if now >= next_pub:
-                    next_pub = now + publish_every
-                    self.board = self._board(race)
-                    self._event("board", {"race_id": race.id, "state": race.state, "clock": self.clock(race, now),
-                                          "late": race.late, "board": self.board}, log=False)
+            self.step(msg, self.now())
             for k, p in self.procs.items():
                 st = self.cam_state[k]
                 if not p.is_alive() and not st["error"] and self._running:
                     st["error"], st["online"] = "camera process stopped", False
+
+    def step(self, msg, now: float):
+        """One turn of the fusion loop: take a camera message (or none), fuse, publish when due.
+
+        The live loop calls it with the wall clock; ``replay`` calls it with the
+        recorded arrival times, so a recorded session is tracked exactly as live.
+        """
+        if msg is not None:
+            self._handle(msg, now)
+        with self.lock:
+            race = self.race
+            for t, cam, dets in self.buf.pop_ready(now):
+                race.engine.process(t, dets, cam)
+                if dets:
+                    race.last_seen = t
+            race.engine.tick(now - self.buf.latency)
+            for ev in race.engine.events[race.n_events:]:
+                if ev.kind in ("camera_offline", "camera_online"):
+                    self._event(ev.kind, {"camera": ev.subject, "name": self.cam_state.get(ev.subject, {}).get("name", ev.subject)})
+            race.n_events = len(race.engine.events)
+            self._race_logic(race, now)
+            if now >= self._next_pub:
+                self._next_pub = now + self._publish_every
+                self.board = self._board(race)
+                data = {"race_id": race.id, "state": race.state, "clock": self.clock(race, now),
+                        "late": race.late, "board": self.board}
+                if self.session_log is not None:
+                    self.session_log.board(now, data)
+                self._event("board", data, log=False)
 
     def _handle(self, msg, now):
         kind, key = msg[0], msg[1]
@@ -295,6 +338,9 @@ class Runtime:
                 self.preview_cond.notify_all()
         elif kind == "stats":
             st.update(msg[2])
+        elif kind == "recorded":
+            st["recorded"] = msg[2]
+            self._event("camera_recorded", {"camera": key, "name": st["name"], **msg[2]})
         elif kind == "started":
             st["applied"], st["error"] = msg[2], ""
             self._event("camera_started", {"camera": key, "name": st["name"]})
@@ -359,6 +405,8 @@ class Runtime:
         return out
 
     def _event(self, kind: str, data: dict, log: bool = True):
+        if log and self.session_log is not None:
+            self.session_log.event(self.now(), kind, data)
         if log:
             self.log.appendleft({"t": time.time(), "kind": kind, **{k: v for k, v in data.items() if k != "board"}})
         try:

@@ -32,7 +32,7 @@ ACTIONS = {
     "save", "new_project", "set_step", "set_demo_scene", "update_race", "set_marbles", "discover_cameras",
     "update_camera", "move_camera", "forget_camera", "add_marker", "undo_marker", "clear_markers",
     "set_marker_distance", "move_marker", "autofill_markers", "capture_background", "sample_colour",
-    "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "list_maps", "open_map", "new_map", "export_map", "import_map",
+    "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "update_record", "list_maps", "open_map", "new_map", "export_map", "import_map",
     "check_views", "realign_cameras", "new_stretch", "go_live", "stop_live",
     "new_race", "focus_camera",
 }

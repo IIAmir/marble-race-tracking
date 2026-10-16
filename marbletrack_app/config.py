@@ -136,6 +136,15 @@ class VmixSetup:
 
 
 @dataclass
+class RecordSetup:
+    """Record every camera while live, for replay and for validating the tracker on real races."""
+
+    enabled: bool = False
+    folder: str = ""  # empty: "recordings" inside the map's folder
+    jpeg_quality: int = 92  # frames are stored as Motion-JPEG (one file per camera)
+
+
+@dataclass
 class Project:
     name: str = "My marble race"  # the map's name: one project per route
     notes: str = ""  # free text, e.g. which draw / route this map is for
@@ -154,6 +163,7 @@ class Project:
     cameras: list[CameraSetup] = field(default_factory=list)
     server: ServerSetup = field(default_factory=ServerSetup)
     vmix: VmixSetup = field(default_factory=VmixSetup)
+    record: RecordSetup = field(default_factory=RecordSetup)
     auto_new_race: bool = True  # start a new race when the track has been empty for a while
     schema: int = SCHEMA_VERSION
 
@@ -222,6 +232,7 @@ class Project:
         return cls(
             marbles=[MarbleDef(**known(MarbleDef, m)) for m in d.pop("marbles", [])],
             server=ServerSetup(**known(ServerSetup, d.pop("server", {}))),
+            record=RecordSetup(**known(RecordSetup, d.pop("record", {}))),
             vmix=VmixSetup(**{k: v for k, v in d.pop("vmix", {}).items() if k in VmixSetup.__dataclass_fields__}),
             cameras=cams,
             **{k: v for k, v in d.items() if k in cls.__dataclass_fields__},

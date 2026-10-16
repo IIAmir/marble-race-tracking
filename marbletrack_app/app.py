@@ -854,6 +854,20 @@ class App:
                     raise UserError(f"unknown field {k}")
         return self.state()
 
+    def update_record(self, **fields) -> dict:
+        with self.lock:
+            r = self.project.record
+            for k, val in fields.items():
+                if k == "enabled":
+                    r.enabled = bool(val)
+                elif k == "folder":
+                    r.folder = str(val).strip()[:400]
+                elif k == "jpeg_quality":
+                    r.jpeg_quality = int(np.clip(int(val), 50, 100))
+                else:
+                    raise UserError(f"unknown field {k}")
+        return self.state()
+
     def test_vmix(self) -> dict:
         return vmix.test_connection(self.project.vmix)
 
@@ -873,7 +887,15 @@ class App:
                 self._set_demo_scene("race")
                 demo_pickles = {c.key: self._write_demo_pickle(c.device) for c in self.project.active_cameras if c.backend == "demo"}
             try:
-                rt = Runtime(self.project, self.backgrounds, on_event=self._on_event, demo_pickles=demo_pickles)
+                rec = None
+                if self.project.record.enabled:
+                    from . import recording
+
+                    rec = recording.start_session(recording.session_root(self.project, self._project_folder()),
+                                                  self.project, self.backgrounds)
+                    log.info("recording this session to %s", rec)
+                rt = Runtime(self.project, self.backgrounds, on_event=self._on_event, demo_pickles=demo_pickles,
+                             record_dir=rec)
             except C.CalibrationError as e:
                 raise UserError(str(e))
             srv = self.project.server
