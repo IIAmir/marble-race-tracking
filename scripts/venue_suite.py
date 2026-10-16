@@ -104,12 +104,15 @@ def main():
     ap.add_argument("--cache", default=None, help="folder for physics and detection caches")
     ap.add_argument("--out", default="results/venue.json")
     ap.add_argument("--stills", type=int, default=None, help="only render a contact sheet for this seed")
+    ap.add_argument("--append", action="store_true", help="add to the races already in --out")
     args = ap.parse_args()
     if args.stills is not None:
         stills(args.stills, Path("results/stills/venue_cameras.jpg"))
         return
     rows, t0 = [], time.time()
     out = Path(args.out)
+    if args.append and out.exists():
+        rows = json.loads(out.read_text())["runs"]
     for sc in args.scenarios:
         for seed in args.seeds:
             rep = run_venue_race(seed, sc, workers=args.workers, cache_dir=args.cache)

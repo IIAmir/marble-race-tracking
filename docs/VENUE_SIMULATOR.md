@@ -31,7 +31,7 @@ in real time (see EQUIPMENT.md §7 for the per-frame cost on the venue PC).
 | Ball set | The real set (1 yellow, 9 yellow stripe) or the recommended set with 9 replaced by a pink solid. Numbers are real glyphs on white discs; the 9 is a stripe. |
 | Scenery (`venue/scene.py`, `shading.py`) | Terrain with embankments, rock, moss, flowers, trees, a house, a parking lot; sun-like key light with a shadow map, ambient and sky light; procedural textures. |
 | Cameras (`venue/camera.py`) | AIDA HD-NDI-IP67: 1080p60, 4 mm lens (67.5° HFOV), barrel distortion, 1/1000 s exposure, 14.5 ms rolling-shutter readout, vignetting, shot and read noise, 4:2:0 JPEG at the NDI|HX bit budget. OBSBOT Tail 2: 4K60 wide, looking straight down. White balance and frame phase differ per camera. |
-| Rig (`venue/rig.py`) | Placed the way an installer would: a close finish camera (last 40 cm before the line), a start camera, then the remaining cameras greedily for coverage at ≥ 24 px per ball, terrain occlusion included. Gaps can remain, as on a real layout. |
+| Rig (`venue/rig.py`) | Placed the way an installer would: a close finish camera (last 40 cm before the line), a start camera, then the remaining cameras greedily for coverage at ≥ 24 px per ball; the best spots are checked by looking through them (depth render of terrain, trees, buildings, the tower). About 75–80 % of the racing track ends up covered; the rest are gaps, as on a real layout. |
 | Timing (`venue/run.py`) | Each camera stamps frames with its own clock and encoder latency; the network adds delay and jitter; the app's `SenderClock` maps the stamps; the latency measured on site (1 ms error) is subtracted. Frames are dropped at 0.2 %. |
 | Operator | Waypoints clicked every 20 cm on each visible stretch (1 px hand jitter, 2 mm tape error, a new stretch per separate pass), the route's wider sections entered once, the band-width slider set from what the camera shows, the empty track captured over a second, each ball clicked three times, all through `marbletrack_app.calibration`. |
 
@@ -75,6 +75,19 @@ caught one over-eager first version (see 3).
 6. **Uncertainty in places no camera sees.** A ball inside an unseen stretch was
    given unbounded uncertainty, though it can only be within that stretch.
    *Fix*: its position variance is bounded by the interval it must be in.
+
+7. **A colour click that caught only part of a ball.** From above, the black 8
+   on a dark stretch of track blends in and only its white number disc stands
+   out; one such click made the overhead camera's model of the 8 look like the
+   cue ball. *Fix*: with three or more clicks, a click whose colour is far from
+   the others' is left out, and the operator is told to click where the marble
+   stands out.
+
+The simulator's own installer was also made more honest along the way: camera
+spots are checked with a depth render of the whole scene (a tree in front of a
+camera used to pass the terrain-only test), so the coverage it reports, about
+75–80 % of the racing track, is what the cameras really see. The gaps are real
+tests: balls bounce back into them off spinners and sit there for seconds.
 
 ## Results
 
