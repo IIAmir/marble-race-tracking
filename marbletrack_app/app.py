@@ -969,7 +969,7 @@ class App:
             s.publish_board(data["race_id"], data["state"], data["clock"], data["board"], rt.cam_state if rt else {},
                             data.get("late", False), result=data.get("result"), hidden=data.get("hidden", False))
         elif kind in ("race_started", "finish", "race_complete", "new_race", "camera_offline", "camera_online", "camera_error",
-                    "operator", "rack_check"):
+                    "operator", "rack_check", "finish_estimated"):
             s.publish_event(kind, {k: v for k, v in data.items()})
 
     def live_operator(self, action: str, **args) -> dict:

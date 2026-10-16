@@ -797,10 +797,13 @@ VIEWS.review = {
     }).join("");
     const gaps = st.coverage.gaps;
     const fin = active().some((c) => c.role === "finish");
+    const fs = S.st.project.finish_s;
+    const finSeen = !(fs > 0) || active().some((c) => c.role !== "rack" && (c.s_ranges || []).some(([a, b]) => a + 0.05 <= fs && fs <= b - 0.05));
     this.el.innerHTML = head("Review & go live", "Check everything, then go live. You can come back to setup at any time.") + `
       <div class="checklist">${rows}</div>
       ${viewCard()}
       ${!fin ? note("info", "No finish-line camera. Finish times then come from the section camera at the line (a few ms resolution instead of under one).") : ""}
+      ${finSeen ? "" : note("warn", `No camera's waypoints reach 5 cm past the finish line (${fmtM(S.st.project.finish_s)}). Marbles get a finish time only from sightings on both sides of the line: add a waypoint after the line on the finish camera.`)}
       ${gaps.length ? note("warn", `Not covered by any camera: ${gaps.map(([a, b]) => `${a}–${b} m`).join(", ")}. The tracker holds positions there.`) : ""}
       <div class="card"><h3>Coverage</h3>${coverageBar(null)}</div>`;
     bindViewCard(this.el);
@@ -948,6 +951,7 @@ function paintLive(d) {
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
     new_race: (e) => [`New race (${e.reason})`, ""], camera_offline: (e) => [`${e.name} stopped sending frames`, "bad"], camera_online: (e) => [`${e.name} back online`, "ok"],
     operator: (e) => [`Operator: ${{ swap: `swapped ${e.a} and ${e.b}`, set_order: `set the order ${(e.order || []).join(", ")}`, confirm: e.confirmed ? "confirmed the result" : "reopened the result", freeze: e.on ? "froze the board" : "unfroze the board", hide: e.on ? "took the board off air" : "put the board back on air" }[e.action] || e.action}`, "warn"],
+    finish_estimated: (e) => [`${e.name}: finish not seen at the line, time estimated: check`, "bad"],
     rack_check: (e) => [e.match ? `Finish rack agrees with the board${e.confirmed ? ": result confirmed" : ""}` : `Finish rack: ${e.detail}`, e.match ? "ok" : e.status === "filling" ? "" : "bad"],
     camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
   $("#log").innerHTML = (d.log || []).slice(0, 30).map((e) => {

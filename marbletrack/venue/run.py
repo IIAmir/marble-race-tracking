@@ -121,6 +121,8 @@ def calibrate(cam, course, balls, laps, rng):
     for lo, hi in _visible_runs(cam, course):
         grid = np.arange(np.ceil(lo / SPACING) * SPACING, hi + 1e-9, SPACING)
         grid = grid[grid < course.length]
+        if len(grid) and hi - grid[-1] > 0.05:
+            grid = np.r_[grid, hi - 0.01]  # the operator also clicks the last spot the camera sees
         if len(grid) < 2:
             continue
         if markers:
@@ -363,6 +365,7 @@ def fuse_and_score(race: Race, cams: list[dict], sc: VenueScenario) -> dict:
     for tc, cid, d in buf.flush():
         engine.process(tc, d, cid)
     engine.tick(engine.now + 1.0)
+    engine.estimate_missing_finishes()  # as the app does when the race completes
     board = scorer.evaluate(engine, engine.now)
     res = scorer.final(board)
     rack = [ids[i] for i in race.rack_order]

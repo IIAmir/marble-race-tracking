@@ -36,6 +36,7 @@ class MarbleState:
     placed: bool = False  # inserted into the leaderboard order
     n_obs: int = 0
     fresh: int = 0  # observations since first sighting or since re-acquisition after a long gap
+    finish_estimated: bool = False  # finish extrapolated, not seen (see estimate_missing_finishes)
 
     @property
     def initialized(self) -> bool:
@@ -533,6 +534,28 @@ class FusionEngine:
             return "tracking"
         return "coasting" if age <= self.lost_after else "lost"
 
+    def estimate_missing_finishes(self, reach: float = 0.5) -> list[str]:
+        """At the end of a race: marbles last seen heading for the line but never seen past it.
+
+        A marble seen moving within ``reach`` of the finish and then lost (a camera
+        that missed it at the line, a dark ball on a dark stretch) is given the
+        finish time its last speed implies, with a wide uncertainty, so the board
+        flags it for review instead of ranking it last.
+        """
+        out = []
+        for m in self.marbles:
+            if m.finish_time is not None or m.last_obs_s is None:
+                continue
+            gap = self.s_finish - m.last_obs_s
+            if 0 <= gap <= reach and m.last_obs_v > 0.1:
+                m.finish_time = m.last_obs_t + gap / m.last_obs_v
+                m.finish_sigma = max(0.05, 0.3 * gap / m.last_obs_v)  # honest: this is an extrapolation
+                m.finish_final = True
+                m.finish_estimated = True
+                self.events.append(RaceEvent(self.now, "finish_estimated", m.marble_id, f"{m.finish_time:.3f}"))
+                out.append(m.marble_id)
+        return out
+
     def swap_identities(self, a: str, b: str) -> None:
         """Operator correction: the tracker has two marbles the wrong way round.
 
@@ -669,7 +692,7 @@ class FusionEngine:
                     status=st,
                     finish_time=m.finish_time,
                     gap_m=0.0 if st == "finished" or not m.initialized else float(leader_s - at_now(m)),
-                    photo_finish=i in close,
+                    photo_finish=i in close or m.finish_estimated,
                     lap=self.lap_of(m),
                 )
             )

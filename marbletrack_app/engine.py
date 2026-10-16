@@ -454,6 +454,8 @@ class Runtime:
             done = len(race.finished_ids) == len(self.project.marbles)
             stale = race.first_finish is not None and now - max(race.last_seen, race.first_finish) > 15
             if done or stale:
+                for mid in eng.estimate_missing_finishes():
+                    self._event("finish_estimated", {"race_id": race.id, "marble_id": mid, "name": self._name(mid)})
                 race.state = "complete"
                 self._event("race_complete", {"race_id": race.id, "board": self._board(race)})
                 self._check_rack(race)
