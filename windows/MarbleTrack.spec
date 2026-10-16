@@ -29,7 +29,8 @@ except Exception:
 a = Analysis(
     [os.path.join(SPECPATH, "launcher.py")],
     pathex=[ROOT],
-    datas=[(os.path.join(ROOT, "marbletrack_app", "web"), os.path.join("marbletrack_app", "web"))] + ndi_datas,
+    datas=[(os.path.join(ROOT, "marbletrack_app", "web"), os.path.join("marbletrack_app", "web")),
+           (os.path.join(ROOT, "docs", "MarbleTrack-Guide-FA.pdf"), os.path.join("marbletrack_app", "web", "guide"))] + ndi_datas,
     binaries=ndi_binaries,
     hiddenimports=hidden,
     excludes=["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython", "pytest", "hypothesis"],

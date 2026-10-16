@@ -9,6 +9,9 @@ Four things to show, each runs on its own; none needs cameras or internet.
 | 3 | **The live race simulator** in the browser: the venue routes in a forest landscape, billiard balls, laps, tracker vs truth, failures on demand | open `demo/simulator.html` (double-click) | 3–5 min |
 | 4 | **Replay in 3D** of recorded tracker output | open `demo/track3d.html` | 1–2 min |
 
+The user guide for the people who will run it, in Persian with screenshots of every step:
+`docs/MarbleTrack-Guide-FA.pdf` (also the *Guide* button in the app).
+
 ## 1. The app
 
 **Install** (once):

@@ -210,7 +210,8 @@
     "Nothing is listening at that address (connection refused). Is the server running?": "در آن نشانی چیزی در حال گوش دادن نیست (اتصال رد شد). آیا سرور روشن است؟",
     "No answer within 5 s. Check the address, the network and the firewall.": "در ۵ ثانیه پاسخی نیامد. نشانی، شبکه و فایروال را بررسی کنید.",
     "The server name could not be found (DNS). Check the address.": "نام سرور پیدا نشد (DNS). نشانی را بررسی کنید.",
-    "Ctrl+Z": "Ctrl+Z",
+    "Ctrl+Z": "Ctrl+Z", "Guide": "راهنما", "Open the user guide (PDF)": "باز کردن راهنمای کاربر (PDF)",
+    "the guide is not included in this build": "راهنما در این نسخه از برنامه نیست",
   };
   /* ------------------------------------------------------------ patterns (applied in order to strings not found above) */
   const R = [

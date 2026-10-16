@@ -787,6 +787,24 @@ class App:
         self.toast("ok", f"Copied {n} colour{'s' if n != 1 else ''}. Copied colours are a fallback: sampling on this camera is more reliable.")
         return self.state()
 
+    def open_guide(self) -> dict:
+        """Open the user guide (PDF, in Persian) in the PC's PDF viewer."""
+        from .server import web_root
+
+        name = "MarbleTrack-Guide-FA.pdf"
+        path = web_root() / "guide" / name  # the Windows build bundles it here
+        if not path.is_file():
+            path = Path(__file__).resolve().parents[1] / "docs" / name  # running from the repository
+        if not path.is_file():
+            raise UserError("the guide is not included in this build")
+        if os.name == "nt":
+            os.startfile(path)  # noqa: S606 - a local file the app ships
+        else:
+            import webbrowser
+
+            webbrowser.open(path.as_uri())
+        return {"ok": True, "path": str(path)}
+
     def demo_setup_all(self) -> dict:
         """Demo only: everything an installer does, on every demo camera, in one go (for showing the app)."""
         if not self.demo:

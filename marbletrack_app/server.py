@@ -34,7 +34,7 @@ ACTIONS = {
     "set_marker_distance", "move_marker", "autofill_markers", "capture_background", "sample_colour",
     "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "update_record", "live_operator", "live_harvest", "demo_setup_all", "list_maps", "open_map", "new_map", "export_map", "import_map",
     "check_views", "realign_cameras", "new_stretch", "go_live", "stop_live",
-    "new_race", "focus_camera",
+    "new_race", "focus_camera", "open_guide",
 }
 
 

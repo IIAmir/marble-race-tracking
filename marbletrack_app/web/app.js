@@ -8,7 +8,8 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PR = new Intl.PluralRules("en");
-const plural = (n, one, many = one + "s") => `${n.toLocaleString()} ${PR.select(n) === "one" ? one : many}`;
+const DATE_LOCALE = window.MT_LANG === "fa" ? "fa-IR" : undefined;  // dates and clock times in the interface language
+const plural = (n, one, many = one + "s") => `${n.toLocaleString("en-US")} ${PR.select(n) === "one" ? one : many}`;
 const fmtM = (v, d = 2) => (v == null || !isFinite(v) ? "—" : `${(+v).toFixed(d)} m`);
 const fmtS = (v, d = 3) => (v == null || !isFinite(v) ? "—" : `${(+v).toFixed(d)} s`);
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -954,11 +955,11 @@ function paintLive(d) {
   const s = d.server || {};
   const led = { connected: "ok", connecting: "warn", reconnecting: "warn", error: "bad", off: "", stopped: "" }[s.state] ?? "";
   $("#srv").innerHTML = `<span class="led ${led}"></span>${esc({ connected: "Connected", connecting: "Connecting…", reconnecting: "Reconnecting…", error: "Not connected", off: "Off", stopped: "Stopped" }[s.state] || s.state || "—")}`;
-  $("#srvdet").textContent = s.state === "connected" ? `${(s.sent || 0).toLocaleString()} messages sent` : s.detail || "";
+  $("#srvdet").textContent = s.state === "connected" ? `${(s.sent || 0).toLocaleString("en-US")} messages sent` : s.detail || "";
   $("#srvdet").title = s.detail || "";
   const vm = d.vmix || {};
   $("#vmx").innerHTML = `<span class="led ${{ connected: vm.errors ? "warn" : "ok", connecting: "warn", reconnecting: "warn" }[vm.state] ?? ""}"></span>${esc({ connected: "Connected", connecting: "Connecting…", reconnecting: "Reconnecting…", off: "Off", stopped: "Stopped" }[vm.state] || vm.state || "—")}`;
-  $("#vmxdet").textContent = vm.state === "connected" ? (vm.errors ? `${vm.errors} rejected · ${vm.last_error}` : `${(vm.sent || 0).toLocaleString()} field updates`) : vm.detail || "";
+  $("#vmxdet").textContent = vm.state === "connected" ? (vm.errors ? `${vm.errors} rejected · ${vm.last_error}` : `${(vm.sent || 0).toLocaleString("en-US")} field updates`) : vm.detail || "";
   $("#vmxdet").title = vm.last_error || vm.detail || "";
   // race control log
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
@@ -969,7 +970,7 @@ function paintLive(d) {
     camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
   $("#log").innerHTML = (d.log || []).slice(0, 30).map((e) => {
     const f = KIND[e.kind]; if (!f) return "";
-    const [t, c] = f(e); const time = new Date(e.t * 1000).toLocaleTimeString();
+    const [t, c] = f(e); const time = new Date(e.t * 1000).toLocaleTimeString(DATE_LOCALE);
     return `<div class="${c}"><span style="color:var(--faint)">${time}</span> ${esc(t)}</div>`;
   }).join("");
 }
@@ -1034,7 +1035,7 @@ function bindViewCard(el) {
 }
 
 /* ================================================================== maps (one saved map per route) */
-const fmtDate = (iso) => { if (!iso) return "never saved"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); };
+const fmtDate = (iso) => { if (!iso) return "never saved"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(DATE_LOCALE); };
 async function openMaps() {
   if (S.st.mode !== "setup") return;
   if (S.dirty) await autosave();
@@ -1096,6 +1097,7 @@ async function afterOpen() {
   try { await api("check_views", {}, { mutates: false }); } catch { /* toast shown */ }
 }
 $("#mapsBtn").onclick = openMaps;
+$("#guideBtn").onclick = (e) => busy(e.currentTarget, "Opening…", () => api("open_guide", {}, { mutates: false }));
 $("#demoAll").onclick = (e) => busy(e.currentTarget, "Setting up…", async () => {
   const r = await api("demo_setup_all", {});
   toast("ok", `${plural(r.demo_cameras, "demo camera")} set up: waypoints, empty track and colours. Review, then Go live.`);

@@ -38,6 +38,11 @@ Command-line options:
 | `--home DIR` | Data folder; default `%APPDATA%\MarbleTrack`. |
 | `--selftest` | Headless end-to-end check, exit code 0 on success (used by the build). |
 
+**Language and guide.** The interface is in Persian (right to left) by default; the *English* button in
+the top bar switches it (kept per PC). The *Guide* button opens the Persian user guide,
+[`MarbleTrack-Guide-FA.pdf`](MarbleTrack-Guide-FA.pdf): installation, every setup step with where to
+click, race control, the race-day checklist and troubleshooting (`scripts/build_guide.py` rebuilds it).
+
 Each route is a **map** (a project), saved automatically to `%APPDATA%\MarbleTrack\projects\<name>\`:
 a `project.json` plus one empty-track PNG per camera. Logs are in `%APPDATA%\MarbleTrack\logs`.
 
