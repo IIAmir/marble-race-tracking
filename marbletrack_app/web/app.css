@@ -298,3 +298,21 @@ details.more > div { margin-top: 14px; }
   .live { grid-template-columns: minmax(0, 1fr) 360px; }
   .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ---------------------------------------------------------------- maps sheet */
+.sheet-back { position: fixed; inset: 0; z-index: 40; background: rgba(5, 8, 12, .62); display: grid; place-items: start center; padding: 56px 16px 16px; overflow: auto;
+  transition: opacity 180ms var(--ease-out); }
+.sheet-back.enter { opacity: 0; }
+.sheet { width: min(860px, 100%); background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: var(--shadow); padding: 20px; display: grid; gap: 16px;
+  transition: transform 220ms var(--ease-out); }
+.sheet-back.enter .sheet { transform: translateY(-8px); }
+.sheet h2 { margin: 0; font: 650 19px var(--display); }
+.sheet h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.sheet .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.maplist { display: grid; gap: 6px; }
+.maprow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); }
+.maprow.cur { outline: 1px solid var(--accent); }
+.maprow .meta { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.maprow .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+textarea.input { min-height: 60px; resize: vertical; }
+@media (max-width: 640px) { .maprow { grid-template-columns: minmax(0, 1fr); } .maprow .acts { justify-content: flex-start; } }

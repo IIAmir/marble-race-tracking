@@ -38,8 +38,24 @@ Command-line options:
 | `--home DIR` | Data folder; default `%APPDATA%\MarbleTrack`. |
 | `--selftest` | Headless end-to-end check, exit code 0 on success (used by the build). |
 
-Projects are saved automatically to `%APPDATA%\MarbleTrack\projects\<name>\`. Each project is a
-`project.json` plus one empty-track PNG per camera. Logs are in `%APPDATA%\MarbleTrack\logs`.
+Each route is a **map** (a project), saved automatically to `%APPDATA%\MarbleTrack\projects\<name>\`:
+a `project.json` plus one empty-track PNG per camera. Logs are in `%APPDATA%\MarbleTrack\logs`.
+
+## Maps: one per route
+
+Routes change from draw to draw, and old ones come back. The **Maps** button in the top bar:
+
+- lists every saved map, newest first, with its notes;
+- **Open**: switch to a saved map. Every camera is then compared with the empty track saved in
+  the map (*Camera views* on the Review step): *matches*, *moved* (waypoints can be carried over
+  to the new view in one click) or *different view* (redo its waypoints);
+- **Start new route**: same marbles, cameras and outputs; waypoints, empty track and colours
+  are done again;
+- **Copy as new route**: start from an existing map;
+- **Export / Import .zip**: one file per map, written to `%APPDATA%\MarbleTrack\exports`.
+
+Maps are never overwritten by another map with the same name, and maps saved by an older
+version open in newer ones.
 
 ## The setup wizard
 
@@ -85,7 +101,7 @@ freely; **Go live** unlocks when every step is complete.
    - *Fill a vMix title*: the vMix computer (127.0.0.1 on the same PC), the title's name and its field
      names (`P{n}Name.Text`, `P{n}Info.Text`, `Clock.Text`, `Status.Text` by default; `{n}` is the row).
      *Test vMix* checks that vMix answers, that the title exists and that it has every field. See
-     [EQUIPMENT.md §8](EQUIPMENT.md#8-vmix-output) for the title design.
+     [EQUIPMENT.md §9](EQUIPMENT.md#9-vmix-output) for the title design.
    - *Stream to a server*: the WebSocket address (`ws://` or `wss://`), an optional
      access token and a station name. *Test connection* explains failures in plain words
      (refused, timeout, DNS, rejected token).

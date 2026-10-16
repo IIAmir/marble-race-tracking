@@ -134,6 +134,7 @@ function render() {
   $("#modePill").classList.toggle("on-air", live);
   $("#projectName").textContent = st.project.name;
   $("#projectName").title = st.project.name;
+  $("#mapsBtn").hidden = live;
   if (live) { renderLive(); return; }
   stopLive();
   if (S.step !== st.step) mountStep(st.step, S.step != null);
@@ -764,9 +765,11 @@ VIEWS.review = {
     const fin = active().some((c) => c.role === "finish");
     this.el.innerHTML = head("Review & go live", "Check everything, then go live. You can come back to setup at any time.") + `
       <div class="checklist">${rows}</div>
+      ${viewCard()}
       ${!fin ? note("info", "No finish-line camera. Finish times then come from the section camera at the line (a few ms resolution instead of under one).") : ""}
       ${gaps.length ? note("warn", `Not covered by any camera: ${gaps.map(([a, b]) => `${a}–${b} m`).join(", ")}. The tracker holds positions there.`) : ""}
       <div class="card"><h3>Coverage</h3>${coverageBar(null)}</div>`;
+    bindViewCard(this.el);
   },
   update() { this.draw(); },
 };
@@ -903,3 +906,107 @@ function startSetupEvents() {
 
 window.addEventListener("resize", () => current?.viewer?.draw());
 loadState().then(() => { startSetupEvents(); if (S.st.cameras.length === 0 && S.st.step === "race" && S.st.demo) { /* first run with demo */ } });
+
+/* ================================================================== camera views vs the saved map */
+const VIEW = { same: ["ok", "Matches the map"], moved: ["warn", "Moved"], changed: ["bad", "Different view"], size: ["bad", "Different resolution"],
+  realigned: ["warn", "Waypoints carried over"], redo: ["warn", "Redo"], error: ["bad", "No picture"] };
+function viewCard() {
+  const cams = active().filter((c) => c.has_background);
+  if (!cams.length) return "";
+  const checked = cams.filter((c) => c.view);
+  const moved = cams.filter((c) => c.view?.status === "moved");
+  const rows = checked.map((c) => {
+    const [k, t] = VIEW[c.view.status] || ["", c.view.status];
+    return `<div class="check" style="grid-template-columns:auto minmax(0,1fr) auto"><span class="chip ${k}">${esc(t)}</span><div style="min-width:0"><b>${esc(c.name)}</b><div class="hint ellipsis">${esc(c.view.detail || "")}</div></div>
+      ${c.view.status === "moved" ? `<button class="btn sm" data-realign="${esc(c.key)}">Carry waypoints over</button>`
+        : ["changed", "size", "redo"].includes(c.view.status) ? `<button class="btn sm" data-step="waypoints">Redo waypoints</button>`
+        : c.view.status === "realigned" ? `<button class="btn sm" data-step="background">Capture empty track</button>` : ""}</div>`;
+  }).join("");
+  return `<div class="card stack"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Camera views</h3>
+      <div class="row">${moved.length > 1 ? `<button class="btn sm" id="realignAll">Carry all over (${moved.length})</button>` : ""}<button class="btn sm" id="checkViews">${I.search}Check camera views</button></div></div>
+      <p class="hint" style="margin:0">Compares what every camera sees now with the empty track saved in this map. Do this whenever you reopen a map: cameras may have been moved since.</p>
+      ${rows ? `<div class="checklist">${rows}</div>` : ""}</div>`;
+}
+function bindViewCard(el) {
+  const b = $("#checkViews", el);
+  if (b) b.onclick = (e) => busy(e.currentTarget, "Comparing…", () => api("check_views", {}, { mutates: false }));
+  const all = $("#realignAll", el);
+  if (all) all.onclick = (e) => busy(e.currentTarget, "…", () => api("realign_cameras", {}));
+  $$("[data-realign]", el).forEach((x) => { x.onclick = (e) => busy(e.currentTarget, "…", () => api("realign_cameras", { keys: [x.dataset.realign] })); });
+}
+
+/* ================================================================== maps (one saved map per route) */
+const fmtDate = (iso) => { if (!iso) return "never saved"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); };
+async function openMaps() {
+  if (S.st.mode !== "setup") return;
+  if (S.dirty) await autosave();
+  const back = $("#sheet"), sheet = $(".sheet", back);
+  const draw = async () => {
+    const { maps, current } = await api("list_maps", {}, { mutates: false });
+    const p = S.st.project;
+    sheet.innerHTML = `
+      <div class="head"><h2 id="sheetTitle">Maps</h2><button class="btn sm ghost" id="mclose" aria-label="Close">${I.x}</button></div>
+      <p class="hint" style="margin:0">One map per route: cameras, waypoints, empty-track images and colours. Every map is kept, so an old route can be reopened later. When you reopen one, check the camera views on the Review step.</p>
+      <div class="card stack"><h3>This map</h3>
+        <div class="grid2">
+          <label class="field"><span>Name</span><input class="input" id="mname" maxlength="80" value="${esc(p.name)}"></label>
+          <label class="field"><span>Saved</span><input class="input" value="${esc(fmtDate(p.saved_at))}" disabled></label>
+          <label class="field" style="grid-column:1/-1"><span>Notes</span><textarea class="input" id="mnotes" maxlength="2000" placeholder="Which draw or route this is, what changed…">${esc(p.notes || "")}</textarea></label>
+        </div>
+        <div class="row"><button class="btn sm" id="mexport">Export as .zip</button><span class="hint" id="mexres"></span></div>
+      </div>
+      <div class="card stack"><h3>New route</h3>
+        <div class="row" style="flex-wrap:nowrap"><input class="input" id="nname" maxlength="80" placeholder="Name of the new route"><button class="btn primary" id="nempty">Start new route</button></div>
+        <small class="hint">Keeps the marbles, cameras and outputs; waypoints, empty track and colours are done again. To start from an existing route instead, use <b>Copy as new route</b> below.</small>
+      </div>
+      <div class="stack"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Saved maps (${maps.length})</h3><button class="btn sm" id="mimport">Import .zip</button></div>
+        <div class="maplist">${maps.map((m) => `<div class="maprow ${m.folder === current ? "cur" : ""}">
+          <div style="min-width:0"><b class="ellipsis" style="display:block">${esc(m.name)}${m.folder === current ? ' <span class="chip acc">open</span>' : ""}</b>
+            <div class="meta" title="${esc(m.notes)}">${esc(fmtDate(m.saved_at))} · ${plural(m.cameras, "camera")} (${m.cameras_set_up} set up) · ${m.track_length ? fmtM(m.track_length, 1) : "length not set"}${m.notes ? " · " + esc(m.notes) : ""}</div></div>
+          <div class="acts">${m.folder === current ? "" : `<button class="btn sm" data-open="${esc(m.folder)}">Open</button>`}
+            <button class="btn sm ghost" data-copy="${esc(m.folder)}" data-name="${esc(m.name)}">Copy as new route</button>
+            <button class="btn sm ghost" data-export="${esc(m.folder)}">Export</button></div></div>`).join("") || '<p class="hint">No saved maps yet.</p>'}</div></div>`;
+    $("#mclose").onclick = closeMaps;
+    $("#mname").onchange = (e) => api("update_race", { name: e.target.value });
+    $("#mnotes").onchange = (e) => api("update_race", { notes: e.target.value });
+    const exported = (r) => { $("#mexres").textContent = `Saved to ${r.path}`; toast("ok", `Exported to ${r.path}`, 8000); };
+    $("#mexport").onclick = (e) => busy(e.currentTarget, "Exporting…", async () => exported(await api("export_map", {}, { mutates: false })));
+    $("#nempty").onclick = (e) => {
+      const name = $("#nname").value.trim();
+      if (!name) { $("#nname").focus(); toast("warn", "Give the new route a name first."); return; }
+      busy(e.currentTarget, "Creating…", async () => { await api("new_map", { name }, { mutates: false }); closeMaps(); });
+    };
+    $$("[data-open]", sheet).forEach((b) => { b.onclick = (e) => busy(e.currentTarget, "Opening…", async () => { await api("open_map", { folder: b.dataset.open }, { mutates: false }); closeMaps(); afterOpen(); }); });
+    $$("[data-copy]", sheet).forEach((b) => { b.onclick = (e) => {
+      const name = prompt("Name of the new route (a copy of this map):", `${b.dataset.name} (copy)`);
+      if (!name) return;
+      busy(e.currentTarget, "Copying…", async () => { await api("new_map", { name, from_folder: b.dataset.copy }, { mutates: false }); closeMaps(); afterOpen(); });
+    }; });
+    $$("[data-export]", sheet).forEach((b) => { b.onclick = (e) => busy(e.currentTarget, "…", async () => { const r = await api("export_map", { folder: b.dataset.export }, { mutates: false }); toast("ok", `Exported to ${r.path}`, 8000); }); });
+    $("#mimport").onclick = () => $("#importFile").click();
+  };
+  await draw();
+  back.hidden = false; back.classList.add("enter");
+  requestAnimationFrame(() => requestAnimationFrame(() => back.classList.remove("enter")));
+  $("#mclose").focus();
+}
+function closeMaps() { $("#sheet").hidden = true; }
+async function afterOpen() {
+  // a reopened map may no longer fit the cameras: compare right away
+  if (!active().some((c) => c.has_background)) return;
+  toast("info", "Comparing every camera with the saved map…");
+  try { await api("check_views", {}, { mutates: false }); } catch { /* toast shown */ }
+}
+$("#mapsBtn").onclick = openMaps;
+$("#sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") closeMaps(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sheet").hidden) closeMaps(); });
+$("#importFile").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  try {
+    const res = await fetch("/api/import_map", { method: "POST", headers: { "X-Token": TOKEN, "Content-Type": "application/zip" }, body: await f.arrayBuffer() });
+    const data = await res.json();
+    if (!res.ok) { toast("bad", data.error || "Import failed"); return; }
+    setState(data, false); closeMaps(); toast("ok", `Imported ${data.project.name}`); afterOpen();
+  } catch { toast("bad", "Import failed"); }
+};

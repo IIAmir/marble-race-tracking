@@ -1,5 +1,8 @@
 # MarbleTrack on the venue equipment
 
+Nothing here is tied to one route: routes change from draw to draw, so the software
+learns speeds from the marbles themselves and takes lengths from each saved map (§9).
+
 How the system fits the hardware the venue actually has, what that changes compared with
 the reference design in [`ARCHITECTURE.md`](ARCHITECTURE.md) (which assumed GigE Vision
 industrial cameras with PTP and a 240 fps finish camera), and what to measure on site.
@@ -31,8 +34,9 @@ The photo and the video are not from these cameras, but they show what the camer
 - **White plaster ("snow") right next to the track.** It is the same colour as the balls'
   number discs, the stripes of a striped ball and specular highlights. The track band
   (the dashed area in setup step 3) must stay on the grey channel and off the plaster.
-- **The marbles are mini billiard balls** (about 25 mm, est. from the hand in the video),
-  each with a white number disc. The detector ignores white pixels: a ball is identified
+- **The marbles are 25 mm billiard balls**, each with a white number disc. The set (photos of
+  the finish rack): 1 yellow, 2 blue, 3 red, 4 purple, 5 orange, 6 teal, 7 maroon, 8 black,
+  9 yellow stripe, and a white cue ball. The detector ignores white pixels: a ball is identified
   by its body colour, and the white disc only removes some of its pixels.
 
 ## 3. Marble identity: the colour set
@@ -41,9 +45,12 @@ Identification is by colour, so **every ball needs a body colour no other ball h
 venue set has ten colours, all unique except balls **1 and 9, both yellow** (1 is solid
 yellow with a white number disc; 9 is a yellow stripe with white caps).
 
-**Recommendation: replace the 9 with a ball of a colour nobody else has** (for example
-pink/magenta or cyan/turquoise, whichever is farthest from the rest of the set), and
-choose it by measurement, not by eye (step 5 of setup shows any pair the detector could confuse).
+**Recommendation: replace the 9 with a ball of a colour nobody else has.** The set already
+uses yellow, blue, red, orange, maroon, purple, teal, black and white, so the free hues are
+**pink/magenta**, **light green/lime** and **light blue/cyan**. Pink/magenta is farthest from
+everything in the set. Choose by measurement, not by eye: step 5 of setup shows any pair the
+detector could confuse. A stripe ball causes a second problem: its white caps can be read as
+the white cue ball.
 
 Telling 1 from 9 by their white areas is possible in principle: a stripe ball shows far
 more white next to its yellow than a solid ball, which only shows its number disc. It is
@@ -71,6 +78,22 @@ automatic exposure and white balance, so the numbers are pessimistic):
 In this footage the 5 looks red, not orange. With the AIDA cameras at a locked
 exposure and white balance under even light the pairs should separate further, but this
 must be measured: if step 5 flags 3/5 or 3/7 on the real rig, replace one of those balls too.
+In the well-lit finish-rack photos, 3, 5 and 7 are visibly different (red, orange-red,
+maroon), which is encouraging.
+
+Two more pairs to watch in step 5:
+
+- **8 black vs. shadows.** A ball's shadow on the grey track is dark and colourless, like the 8.
+  The detector only accepts a blob of a full ball's size and colour, but check on the real rig
+  that no shadow is reported as the 8.
+- **White cue ball vs. white.** Number discs, highlights and the plaster are also white. The
+  plaster is part of the empty-track image, so it is not a problem while the light stays as it
+  was when the empty track was captured.
+
+**The finish rack.** The rack at the end of the route (1st to 10th) stacks the balls in order
+of arrival. A camera on the rack can read the official order directly, slot by slot, and check
+the tracker's result after every race. That also settles a photo finish without a person
+reviewing frames.
 
 ## 4. Track cameras: AIDA HD-NDI-IP67
 
@@ -83,8 +106,8 @@ must be measured: if step 5 flags 3/5 or 3/7 on the real rig, replace one of tho
 | 1.0 m | 1.34 m | 0.70 | ~36 px |
 
 That is far more detail than identification needs (the stress suite passed with balls
-7–29 px across). The constraint is **coverage**: 13 cameras at ~1 m each see roughly
-10–17 m of track. Where the track is longer, put cameras where order matters
+7–29 px across). The constraint is **coverage**: each camera sees about 1.3 × its distance
+of track width. Where a route is longer than the cameras can cover, put cameras where order matters
 (start, finish, overtaking sections, tunnel and lift exits, the spiral), consider the
 6 or 8 mm lens farther away for long straights, and let the overhead camera or a
 declared blind zone cover the rest. Positions are held, never guessed, in uncovered stretches.
@@ -92,8 +115,18 @@ declared blind zone cover the rest. Positions are held, never guessed, in uncove
 **Exposure, set in each camera's web page** (MarbleTrack does not change NDI camera settings,
 so vMix's picture is never disturbed):
 
-- **Shutter ≤ 1/1000 s, fixed.** Motion blur is speed × shutter: at 3 m/s, 1/250 s smears a
-  ball by 12 mm (half its width), 1/1000 s by 3 mm. Auto exposure picks long shutters indoors.
+- **A short, fixed shutter.** Motion blur is speed × shutter time. Keep it under about a
+  quarter of the ball (6 mm):
+
+  | Ball speed | 1/250 s | 1/500 s | 1/1000 s | 1/2000 s |
+  |---|---|---|---|---|
+  | 1 m/s | 4 mm | 2 mm | 1 mm | 0.5 mm |
+  | 2 m/s | 8 mm | 4 mm | 2 mm | 1 mm |
+  | 4 m/s | 16 mm | 8 mm | 4 mm | 2 mm |
+
+  The top speed is not known and changes with the route, so start at 1/1000 s. Then look at a
+  paused frame on the fastest stretch: a ball should look round, not like a streak. The live
+  screen shows each ball's measured speed. Auto exposure picks long shutters indoors.
 - **Fixed gain, fixed (manual) white balance.** Automatic modes shift the colours learnt in
   step 5.
 - **Light.** A 1/1000 s shutter needs a lot of light, and mains-powered LEDs flicker at
@@ -102,11 +135,13 @@ so vMix's picture is never disturbed):
 
 **Rolling shutter (est.).** A 1/3" CMOS camera at this price is almost certainly
 rolling shutter: the bottom row is read up to ~15 ms after the top row. A ball moving at
-3 m/s is then placed up to ~4 cm differently depending on its height in the image. This
+v m/s is then placed up to v × 15 mm differently depending on its height in the image
+(3 cm at 2 m/s). This
 does not affect the order of balls close together in the same view, but it causes
 disagreement where two cameras overlap and a constant offset at the finish line.
 Planned improvement: time-stamp every detection by its image row (needs the sensor's
-readout time, measured once with a flashing LED or a fast fan).
+readout time, measured once with a flashing LED or a fast fan). Speeds are never assumed:
+the tracker estimates every ball's speed from its own positions.
 
 ## 5. Overhead camera: OBSBOT Tail 2
 
@@ -162,7 +197,36 @@ receiver decodes it (NDI|HX is H.264/H.265).
   frames per second, move decoding to the RTX 5080, or move MarbleTrack to a second PC on
   the same switch (vMix then has the main PC to itself).
 
-## 8. vMix output
+## 8. Routes and saved maps
+
+Every route is a **map**: cameras, waypoints and their distances, empty-track images, colours
+and outputs, saved in its own folder (`%APPDATA%\MarbleTrack\projects\<name>`). The **Maps**
+button in the top bar lists every saved map and:
+
+- **Open** a map from an earlier draw, even one from a year ago;
+- **Start new route**: the same marbles, cameras and outputs; waypoints, empty track and colours
+  are done again;
+- **Copy as new route**: start from an existing map, for a route that differs in only a few places;
+- **Export / Import .zip**: one file per map, for safekeeping or for another PC.
+
+Two maps never share a folder, even when they have the same name.
+
+**Reopening a map checks the cameras.** Each camera's picture is compared with the empty track
+saved in the map (Review step, *Camera views*; it runs by itself when a map is opened):
+
+| Result | Meaning | What to do |
+|---|---|---|
+| Matches the map | The camera has not moved | Nothing |
+| Moved | Nudged or turned since then | *Carry waypoints over*: they are moved with the picture; check them in step 3, then capture the empty track again |
+| Different view | Points somewhere else now | Redo its waypoints |
+
+On the real diorama photo, a camera turned by up to 5° and shifted by up to 120 px was
+recognised, with its waypoints carried over to within 0.2 px, also with the light 15 % dimmer.
+An unrelated picture was rejected. A camera that was *moved to another place* (not just turned)
+sees the 3-D layout from a new angle, which no picture transform can follow exactly: check the
+carried-over waypoints in step 3 and drag any that are off.
+
+## 9. vMix output
 
 MarbleTrack fills a vMix title directly over the vMix TCP API (port 8099): no browser
 source, no data-source polling. Set it up in step 6, *Leaderboard output*.
@@ -179,7 +243,7 @@ on a photo finish), the gap to the leader in metres while racing, or `OUT` for a
 for more than 1.5 s. `Status` is `READY`, `LIVE` or `FINAL`. The field names are
 patterns (`P{n}Name.Text`) and can be changed to match an existing title.
 
-## 9. What changed in the software for this equipment
+## 10. What changed in the software for this equipment
 
 | Change | Where |
 |---|---|
@@ -188,13 +252,12 @@ patterns (`P{n}Name.Text`) and can be changed to match an existing title.
 | Processing resolution keeps the smallest ball ≥ 5 px radius (overhead 4K view) | `marbletrack_app/engine.py` |
 | vMix title output with change-only updates and a connection test | `marbletrack_app/vmix.py`, step 6 of the wizard |
 | Tests: jitter removal, clock steps, processing scale, vMix against a fake vMix server, NDI loopback | `tests/test_equipment.py` |
+| Maps: list, open, new route, copy, export/import; camera-view check and waypoint carry-over | `marbletrack_app/maps.py`, *Maps* button, Review step |
+| Tests: view check (same / moved / different, light change), zip safety, reopening a map | `tests/test_maps.py` |
 
-## 10. Open questions
+## 11. Open questions
 
-1. The ten colours of the set, and the replacement colour for the 9.
-2. Ball diameter (25 mm assumed).
-3. Total track length, and where start, finish, tunnels and the lift are.
-4. Top speed of a ball on the fastest section.
-5. Mounting height of the OBSBOT and how much of the layout it sees.
-6. Whether the AIDA's NDI|HX timestamps and shutter settings behave as described above
+1. The replacement colour for the 9.
+2. Mounting height of the OBSBOT and how much of the layout it sees.
+3. Whether the AIDA's NDI|HX timestamps and shutter settings behave as described above
    (check in its web page; first thing to verify on site).

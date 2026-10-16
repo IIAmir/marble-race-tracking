@@ -113,7 +113,9 @@ class VmixSetup:
 
 @dataclass
 class Project:
-    name: str = "My marble race"
+    name: str = "My marble race"  # the map's name: one project per route
+    notes: str = ""  # free text, e.g. which draw / route this map is for
+    saved_at: str = ""  # UTC, set on every save
     track_length: float = 0.0  # metres, start gate to end of run-out
     finish_s: float = 0.0  # metres from the start gate to the finish line
     start_s: float = 0.1  # race clock starts when the first marble passes this distance
@@ -174,14 +176,17 @@ class Project:
         d = dict(d)
         if d.get("schema", SCHEMA_VERSION) > SCHEMA_VERSION:
             raise ValueError("project was saved by a newer version of MarbleTrack")
+        def known(kind, x: dict) -> dict:  # maps are kept for years: ignore fields this version does not know
+            return {k: v for k, v in x.items() if k in kind.__dataclass_fields__}
+
         cams = []
         for c in d.pop("cameras", []):
-            c = dict(c)
-            c["palette"] = {k: ColorSample(**v) for k, v in c.get("palette", {}).items()}
+            c = known(CameraSetup, c)
+            c["palette"] = {k: ColorSample(**known(ColorSample, v)) for k, v in c.get("palette", {}).items()}
             cams.append(CameraSetup(**c))
         return cls(
-            marbles=[MarbleDef(**m) for m in d.pop("marbles", [])],
-            server=ServerSetup(**d.pop("server", {})),
+            marbles=[MarbleDef(**known(MarbleDef, m)) for m in d.pop("marbles", [])],
+            server=ServerSetup(**known(ServerSetup, d.pop("server", {}))),
             vmix=VmixSetup(**{k: v for k, v in d.pop("vmix", {}).items() if k in VmixSetup.__dataclass_fields__}),
             cameras=cams,
             **{k: v for k, v in d.items() if k in cls.__dataclass_fields__},

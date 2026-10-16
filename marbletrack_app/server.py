@@ -32,7 +32,8 @@ ACTIONS = {
     "save", "new_project", "set_step", "set_demo_scene", "update_race", "set_marbles", "discover_cameras",
     "update_camera", "move_camera", "forget_camera", "add_marker", "undo_marker", "clear_markers",
     "set_marker_distance", "move_marker", "autofill_markers", "capture_background", "sample_colour",
-    "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "go_live", "stop_live",
+    "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "list_maps", "open_map", "new_map", "export_map", "import_map",
+    "check_views", "realign_cameras", "go_live", "stop_live",
     "new_race", "focus_camera",
 }
 
@@ -116,6 +117,8 @@ class Server:
                     return self._json(404, {"error": f"unknown action {action}"})
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
+                    if action == "import_map":  # raw zip body
+                        return self._json(200, srv.app.import_map(self.rfile.read(n) if n else b""))
                     kwargs = json.loads(self.rfile.read(n) or b"{}") if n else {}
                     if not isinstance(kwargs, dict):
                         raise UserError("bad request")

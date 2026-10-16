@@ -12,6 +12,7 @@
   <header class="bar">
     <div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="var(--accent)"/><circle cx="9" cy="9" r="2.6" fill="#fff" opacity=".85"/></svg><span>MarbleTrack</span></div>
     <div class="project" id="projectName" title=""></div>
+    <button class="btn sm ghost" id="mapsBtn" title="Saved maps: open a route, start a new one, export or import">Maps</button>
     <div class="bar-mid" id="barMid"></div>
     <div class="bar-right">
       <span class="saved" id="saved" aria-live="polite"></span>
@@ -28,6 +29,8 @@
   <section class="live" id="live" hidden></section>
 </div>
 
+<div class="sheet-back" id="sheet" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div></div>
+<input type="file" id="importFile" accept=".zip,application/zip" hidden>
 <div class="toaster" id="toaster" aria-live="polite" aria-atomic="false"></div>
 <div class="pop" id="pop" hidden role="dialog" aria-modal="false"></div>
 <canvas class="loupe" id="loupe" width="168" height="168" hidden aria-hidden="true"></canvas>

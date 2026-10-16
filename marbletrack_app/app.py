@@ -20,7 +20,7 @@ import numpy as np
 
 from . import __version__
 from . import calibration as C
-from . import vmix
+from . import maps, vmix
 from .cameras import CameraInfo, DemoSource, LiveCamera, demo_world, discover, make_source
 from .config import CameraSetup, MarbleDef, Project, app_dir, load_project, save_project, slug
 from .engine import Runtime
@@ -60,6 +60,7 @@ class App:
         self.runtime: Runtime | None = None
         self.streamer: LeaderboardStreamer | None = None
         self.vmix: vmix.VmixClient | None = None
+        self.view_check: dict = {}  # camera key -> result of comparing its live view with the saved map
         self.mode = "setup"
         self.step = "race"
         self.demo_scene = "race"
@@ -98,8 +99,8 @@ class App:
             return None
 
     def _project_folder(self) -> Path:
-        if self.folder is None:
-            self.folder = self.home / "projects" / slug(self.project.name)
+        if self.folder is None:  # never reuse another map's folder, even if the names match
+            self.folder = maps.unique_folder(self.home, self.project.name)
         return self.folder
 
     def save(self) -> dict:
@@ -116,6 +117,7 @@ class App:
                     self.project.camera(key).background_file = name
                 except KeyError:
                     pass
+            self.project.saved_at = maps.now_iso()
             save_project(self.project, folder)
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump({"last_project": str(folder)}, f)
@@ -134,7 +136,146 @@ class App:
             self.project, self.folder = Project.new(), None
             self.backgrounds.clear()
             self.samples.clear()
+            self.view_check.clear()
             self.step = "race"
+        return self.state()
+
+    # ------------------------------------------------------------------ maps (one saved project per route)
+    def _map_folder(self, folder: str) -> Path:
+        f = Path(folder).resolve()
+        root = maps.projects_dir(self.home).resolve()
+        if root not in f.parents or not (f / "project.json").exists():
+            raise UserError("that map no longer exists")
+        return f
+
+    def _require_setup(self):
+        if self.mode != "setup":
+            raise UserError("stop tracking first (Back to setup)")
+
+    def list_maps(self) -> dict:
+        return {"maps": maps.list_maps(self.home), "current": str(self.folder) if self.folder else None}
+
+    def _switch_to(self, folder: Path | None, project: Project):
+        self._close_hub()
+        self.project, self.folder = project, folder
+        self.backgrounds.clear()
+        self._bg_dirty.clear()
+        self.samples.clear()
+        self.view_check.clear()
+        if folder is not None:
+            self._load_backgrounds()
+            with open(self._settings_path(), "w", encoding="utf-8") as f:
+                json.dump({"last_project": str(folder)}, f)
+
+    def open_map(self, folder: str) -> dict:
+        """Open a saved map. Run ``check_views`` next: the cameras may have moved since it was saved."""
+        self._require_setup()
+        f = self._map_folder(folder)
+        try:
+            project = load_project(f)
+        except Exception as e:
+            raise UserError(f"could not open that map: {e}")
+        with self.lock:
+            if self.folder is not None and self.folder != f:
+                self.save()
+            self._switch_to(f, project)
+            self.step = "review"
+        return self.state()
+
+    def new_map(self, name: str, from_folder: str | None = None) -> dict:
+        """A new route. ``from_folder``: start from a copy of that map (everything kept; check the views).
+        Otherwise: same marbles, cameras and output settings, but no waypoints, backgrounds or colours."""
+        self._require_setup()
+        name = str(name).strip()[:80] or "New route"
+        with self.lock:
+            if self.folder is not None:
+                self.save()
+            if from_folder:
+                dst = maps.copy_map(self._map_folder(from_folder), self.home, name)
+                project = load_project(dst)
+                project.name, project.notes = name, ""
+                self._switch_to(dst, project)
+                self.step = "review"
+            else:
+                old = self.project
+                project = Project(name=name, marbles=old.marbles, server=old.server, vmix=old.vmix,
+                                  marker_spacing=old.marker_spacing, track_width_m=old.track_width_m,
+                                  marble_diameter_mm=old.marble_diameter_mm, auto_new_race=old.auto_new_race)
+                for c in old.cameras:
+                    project.cameras.append(CameraSetup(key=c.key, backend=c.backend, device=c.device, name=c.name,
+                                                       enabled=c.enabled, role=c.role, width=c.width, height=c.height,
+                                                       fps=c.fps, auto_exposure=c.auto_exposure, exposure=c.exposure,
+                                                       auto_white_balance=c.auto_white_balance, latency_ms=c.latency_ms))
+                self._switch_to(None, project)
+                self.step = "race"
+            self.save()
+        return self.state()
+
+    def export_map(self, folder: str | None = None) -> dict:
+        with self.lock:
+            if folder is None:
+                self.save()
+                f = self._project_folder()
+            else:
+                f = self._map_folder(folder)
+            path = maps.export_zip(f, self.home / "exports")
+        return {"path": str(path)}
+
+    def import_map(self, data: bytes) -> dict:
+        self._require_setup()
+        try:
+            folder = maps.import_zip(data, self.home)
+        except ValueError as e:
+            raise UserError(str(e))
+        return self.open_map(str(folder))
+
+    def check_views(self) -> dict:
+        """Compare every camera's live picture with the empty-track image saved in this map."""
+        self._require_setup()
+        cams = [c for c in self.project.active_cameras if c.key in self.backgrounds]
+        results: dict = {}
+
+        def one(cam):
+            try:
+                frame = self.frame(cam.key)
+                r = maps.view_change(self.backgrounds[cam.key], frame, cam.markers or None)
+            except Exception as e:
+                r = {"status": "error", "detail": str(e), "shift_px": None, "H": None}
+            r["checked_at"] = time.time()
+            results[cam.key] = r
+
+        threads = [threading.Thread(target=one, args=(c,)) for c in cams]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        with self.lock:
+            self.view_check.update(results)
+        moved = [self._cam(k).name for k, r in results.items() if r["status"] == "moved"]
+        changed = [self._cam(k).name for k, r in results.items() if r["status"] in ("changed", "size")]
+        if not moved and not changed and results:
+            self.toast("ok", f"All {len(results)} camera views match this map.")
+        return self.state()
+
+    def realign_cameras(self, keys: list | None = None) -> dict:
+        """Carry the waypoints of moved cameras over to their new view."""
+        with self.lock:
+            done = []
+            for key, r in list(self.view_check.items()):
+                if r.get("status") != "moved" or (keys is not None and key not in keys):
+                    continue
+                cam = self._cam(key)
+                H = np.asarray(r["H"], dtype=np.float64)
+                cam.markers = maps.warp_points(H, cam.markers) if cam.markers else []
+                bg = self.backgrounds.get(key)
+                if bg is not None:  # stand-in until the empty track is captured again
+                    self.backgrounds[key] = cv2.warpPerspective(bg, H, (bg.shape[1], bg.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+                    self._bg_dirty.add(key)
+                self.view_check[key] = {"status": "realigned", "detail": "waypoints carried over; capture the empty track again",
+                                        "shift_px": r.get("shift_px"), "H": None}
+                done.append(cam.name)
+        if done:
+            self.toast("ok", f"Waypoints carried over for {', '.join(done)}. Check them in step 3, then capture the empty track again (step 4).")
         return self.state()
 
     # ------------------------------------------------------------------ state for the UI
@@ -153,6 +294,8 @@ class App:
                 d["palette_issues"] = C.palette_issues(c, p) if c.palette else []
                 d["problems"] = C.camera_problems(c, p, c.key in self.backgrounds) if c.enabled else []
                 d["s_range"] = c.s_range
+                v = self.view_check.get(c.key)
+                d["view"] = None if v is None else {k: v.get(k) for k in ("status", "detail", "shift_px")}
                 if len(c.markers) >= 2:
                     d["band"] = C.band_halfwidth_px(c, p).round(1).tolist()
                     ppm = C.px_per_metre(c)
@@ -170,6 +313,7 @@ class App:
                 "cameras": cams,
                 "coverage": p.coverage(),
                 "folder": str(self.folder) if self.folder else None,
+                "maps_dir": str(maps.projects_dir(self.home)),
                 "live": self.live_status() if self.mode == "live" else None,
             }
 
@@ -199,8 +343,15 @@ class App:
             if not (any(i.key == c.key for i in self.discovered) or (c.backend == "demo" and self.demo)):
                 cams.append(f"{c.name} is not connected.")
         out["cameras"] = cams
+        vc = self.view_check
         out["waypoints"] = [f"{c.name}: place at least two waypoints." for c in act if len(c.markers) < 2]
+        out["waypoints"] += [f"{c.name} looks at a different view than in this map: redo its waypoints." for c in act
+                             if vc.get(c.key, {}).get("status") in ("changed", "size") and len(c.markers) >= 2]
+        out["waypoints"] += [f"{c.name} has moved since this map was saved: carry its waypoints over (Review)." for c in act
+                             if vc.get(c.key, {}).get("status") == "moved"]
         out["background"] = [f"{c.name}: capture the empty track." for c in act if c.key not in self.backgrounds]
+        out["background"] += [f"{c.name}: capture the empty track again (the camera's view changed)." for c in act
+                              if c.key in self.backgrounds and vc.get(c.key, {}).get("status") in ("realigned", "redo")]
         colours = []
         for c in act:
             missing = [m.name for m in p.marbles if m.id not in c.palette]
@@ -233,7 +384,7 @@ class App:
 
     # ------------------------------------------------------------------ step 1: race
     def update_race(self, **fields) -> dict:
-        allowed = {"name", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
+        allowed = {"name", "notes", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
                    "marble_diameter_mm", "auto_new_race", "blind_zones"}
         with self.lock:
             for k, v in fields.items():
@@ -245,6 +396,8 @@ class App:
                         raise UserError("values must be positive numbers")
                 if k == "name":
                     v = str(v).strip()[:80] or "My marble race"
+                if k == "notes":
+                    v = str(v)[:2000]
                 if k == "blind_zones":
                     v = [[float(a), float(b)] for a, b in v if float(b) > float(a)]
                 setattr(self.project, k, v)
@@ -444,6 +597,8 @@ class App:
         with self.lock:
             cam = self._cam(key)
             cam.markers, cam.marker_s = [], []
+            if self.view_check.get(cam.key, {}).get("status") in ("changed", "size", "moved"):
+                self.view_check[cam.key] = {"status": "redo", "detail": "redo its waypoints, then capture the empty track", "shift_px": None, "H": None}
         return self.state()
 
     def set_marker_distance(self, key: str, index: int, s: float) -> dict:
@@ -508,6 +663,8 @@ class App:
                 with self.lock:
                     self.backgrounds[cam.key] = bg
                     self._bg_dirty.add(cam.key)
+                    if self.view_check.get(cam.key, {}).get("status") in ("realigned", "same"):
+                        self.view_check.pop(cam.key)
                     cam.width, cam.height = bg.shape[1], bg.shape[0]
                 results[cam.key] = {"ok": True, "static": chk["ok"], "moving": round(chk["moving_fraction"] * 100, 2)}
             except Exception as e:
