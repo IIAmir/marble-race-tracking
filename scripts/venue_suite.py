@@ -105,6 +105,8 @@ def main():
     ap.add_argument("--out", default="results/venue.json")
     ap.add_argument("--stills", type=int, default=None, help="only render a contact sheet for this seed")
     ap.add_argument("--append", action="store_true", help="add to the races already in --out")
+    ap.add_argument("--rescore", action="store_true",
+                    help="no rendering: fuse and score the detections saved in --cache with the current tracker")
     args = ap.parse_args()
     if args.stills is not None:
         stills(args.stills, Path("results/stills/venue_cameras.jpg"))
@@ -115,7 +117,14 @@ def main():
         rows = json.loads(out.read_text())["runs"]
     for sc in args.scenarios:
         for seed in args.seeds:
-            rep = run_venue_race(seed, sc, workers=args.workers, cache_dir=args.cache)
+            if args.rescore:
+                from marbletrack.venue.run import rescore
+
+                t1 = time.time()
+                rep = rescore(seed, sc, args.cache)
+                rep.update(wall_s=time.time() - t1, coverage={}, cameras=[])
+            else:
+                rep = run_venue_race(seed, sc, workers=args.workers, cache_dir=args.cache)
             row = {"scenario": sc, "seed": seed, **{k: rep.get(k) for k in KEYS},
                    "coverage": rep["coverage"], "issues": rep["issues"][:30],
                    "cameras": [{k: c.get(k) for k in ("cam_id", "ok", "reason", "n_frames", "stretches", "mm_per_px",
