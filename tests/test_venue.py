@@ -80,3 +80,56 @@ def test_render_and_operator_calibration_find_a_parked_ball(course):
     dets = det.detect(frame, 0.0)
     assert len(dets) == 1 and int(np.argmin(dets[0].color_d2)) == 2
     assert abs(dets[0].candidates[0].s - s0) < 0.01
+
+
+@pytest.mark.slow
+def test_finish_rack_camera_reads_rendered_billiard_balls(course):
+    """The rack reader on rendered balls (number discs, shading, the rack tube), colours learned by clicks."""
+    from marbletrack.color import bgr_to_lab
+    from marbletrack.venue.camera import AIDA, CameraSpec, VenueCamera, look_at
+    from marbletrack.venue.scene import build_scene
+    from marbletrack.venue.shading import ShadowMap
+    from marbletrack_app import calibration as C
+    from marbletrack_app.calibration import to_model
+    from marbletrack_app.rack import read_rack
+
+    scene = build_scene(course, 3)
+    shadows = ShadowMap(scene, res=1024)
+    r = course.rack
+    n = len(VENUE_SET_FIXED)
+    centres = [r["base"] + np.array([0.0, 0.0, BALL_R + 0.004 + (n - 1 - k) * (2 * BALL_R + 0.001)]) for k in range(n)]
+    mid = (centres[0] + centres[-1]) / 2
+    cam = None
+    spots = [(az, dist, dz) for az in (180, 160, 200, 140, 220) for dz in (0.0, 0.08, 0.16) for dist in (0.3, 0.4)]
+    for az, dist, dz in spots:  # facing the rack, where an installer would put the camera
+        a = np.radians(az)
+        d = np.cos(a) * r["out"] + np.sin(a) * np.cross([0.0, 0.0, 1.0], r["out"])
+        C0 = mid + dist * d + np.array([0.0, 0.0, dz])
+        if C0[2] < float(scene.height(C0[0], C0[1])) + 0.02:
+            continue
+        cam = VenueCamera(CameraSpec("rack", replace(AIDA, size=(640, 360)), C0, look_at(C0, mid)), scene, shadows, course, seed=2)
+        if cam.visible(np.array(centres)).all():
+            break
+    assert cam is not None and cam.visible(np.array(centres)).all()
+    uv, z = cam.project(np.array(centres))
+    radii = cam.f * BALL_R / z
+    rot = quat_to_mat(np.array([1.0, 0, 0, 0]))
+    bg = cam.render(None, 0.0)
+    rng = np.random.default_rng(0)
+    palette = []
+    for spec in VENUE_SET_FIXED:  # the operator clicks each marble sitting in the rack, in three slots
+        pix, meds = [], []
+        for k in rng.choice(n, 3, replace=False):
+            frame = cam.render(None, 0.0, parked=[(spec, centres[k], rot)])
+            seg = C.segment_click(frame, bg, uv[k], radii[k])
+            pix.append(seg["pixels"])
+            meds.append(np.median(bgr_to_lab(seg["pixels"]), axis=0))
+        palette.append(to_model(C.fit_sample(np.concatenate(pix), 3, meds)))
+    ids = [f"b{b.number}" for b in VENUE_SET_FIXED]
+    order = list(rng.permutation(n))
+    quats = rng.normal(size=(n, 4))
+    quats /= np.linalg.norm(quats, axis=1, keepdims=True)  # any orientation: number discs may face the camera
+    parked = [(VENUE_SET_FIXED[b], centres[k], quat_to_mat(quats[k])) for k, b in enumerate(order)]
+    frame = cam.render(None, 0.0, parked=parked[:7])  # seven marbles in so far
+    got = read_rack(frame, bg, uv, radii, palette, ids)
+    assert got[:7] == [ids[b] for b in order[:7]] and got[7:] == [None] * 3

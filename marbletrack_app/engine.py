@@ -98,6 +98,8 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
         preview_every, preview_w = 0.25, 400
         next_preview = 0.0
         n, busy, stat_t = 0, 0.0, time.perf_counter()
+        rack = spec.get("rack")  # finish-rack camera: read the slots instead of tracking
+        next_rack = 0.0
         while not stop_evt.is_set():
             try:
                 while True:
@@ -115,10 +117,19 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
             if recorder is not None:
                 recorder.add(frame, t_cap - t0, time.perf_counter() - t0)
             start = time.perf_counter()
-            dets = det.detect(frame, t)
+            if rack is not None:
+                dets = []
+                if t >= next_rack:
+                    from .rack import read_rack
+
+                    next_rack = t + 0.25
+                    slots = read_rack(frame, calib.background, rack["slots"], rack["radii"], det.palette, rack["ids"])
+                    out_q.put(("rack", key, t, slots))
+            else:
+                dets = det.detect(frame, t)
+                out_q.put(("det", key, t, dets))
             busy += time.perf_counter() - start
             n += 1
-            out_q.put(("det", key, t, dets))
             if t >= next_preview:
                 next_preview = t + preview_every
                 small_w = min(preview_w, frame.shape[1])
@@ -209,7 +220,9 @@ class Runtime:
         self.lock = threading.RLock()
         self.t0 = time.perf_counter()
         self.has_finish = any(c.role == "finish" for c in project.active_cameras)
-        self.cameras_s = {c.key: c.s_ranges for c in project.active_cameras}
+        self.cameras_s = {c.key: c.s_ranges for c in project.active_cameras if c.role != "rack"}
+        self.rack: dict = {}  # rack camera -> latest slot reading
+        self._rack_reported: dict = {}  # race id -> last rack_check result sent
         self.race = RaceSession(project, self.cameras_s, self.has_finish)
         self.log: deque = deque(maxlen=200)
         self.board: list = []
@@ -230,6 +243,7 @@ class Runtime:
                         auto_white_balance=cam.auto_white_balance, latency_ms=cam.latency_ms, readout_ms=cam.readout_ms,
                         demo_pickle=self.demo_pickles.get(cam.key),
                         colors=[m.color for m in self.project.marbles],
+                        rack=self._rack_spec(cam) if cam.role == "rack" else None,
                         record_dir=str(self.record_dir) if self.record_dir is not None else None,
                         record_quality=self.project.record.jpeg_quality)
             cq = self.ctx.Queue()
@@ -281,6 +295,29 @@ class Runtime:
             self.race = RaceSession(self.project, self.cameras_s, self.has_finish)
             self.board = []
         self._event("new_race", {"race_id": self.race.id, "reason": reason})
+
+    def _rack_spec(self, cam) -> dict:
+        return {"slots": [list(map(float, m)) for m in cam.markers],
+                "radii": [float(r) for r in C.marble_radius_px(cam, self.project)],
+                "ids": [m.id for m in self.project.marbles]}
+
+    def _check_rack(self, race: RaceSession):
+        """Compare the finish rack with the board once the race is complete; report changes."""
+        if race.state != "complete" or not self.rack:
+            return
+        from .rack import compare
+
+        slots = next(iter(self.rack.values()))["slots"]
+        order = [e["marble_id"] for e in self._board(race) if e.get("finish_time") is not None]
+        res = compare(slots, order)
+        key = (res["match"], tuple(map(str, res["rack"])))
+        if self._rack_reported.get(race.id) == key:
+            return
+        self._rack_reported[race.id] = key
+        if res["match"] and self.project.rack_auto_confirm and not race.confirmed:
+            race.confirmed = True
+            res["confirmed"] = True
+        self._event("rack_check", {"race_id": race.id, **res})
 
     # -- operator console -----------------------------------------------------------
     def operator(self, action: str, **args) -> dict:
@@ -377,6 +414,12 @@ class Runtime:
             with self.preview_cond:
                 self.previews[key] = (jpg, boxes, size, now)
                 self.preview_cond.notify_all()
+        elif kind == "rack":
+            _, _, t, slots = msg
+            self.rack[key] = {"t": t, "slots": slots}
+            st["online"], st["last"] = True, now
+            with self.lock:
+                self._check_rack(self.race)
         elif kind == "stats":
             st.update(msg[2])
         elif kind == "recorded":
@@ -413,6 +456,7 @@ class Runtime:
             if done or stale:
                 race.state = "complete"
                 self._event("race_complete", {"race_id": race.id, "board": self._board(race)})
+                self._check_rack(race)
         elif race.state == "complete" and self.project.auto_new_race:
             # marbles back on the track after a quiet spell (the track was cleared, then reloaded)
             if race.last_seen and now - race.last_seen > 3:
@@ -469,5 +513,6 @@ class Runtime:
             return {"race": {"id": race.id, "state": race.state, "clock": self.clock(race, self.now()), "late": race.late,
                              "confirmed": race.confirmed, "manual": bool(race.manual_order)},
                     "frozen": self.frozen, "hidden": self.hidden,
+                    "rack": {k: v["slots"] for k, v in self.rack.items()},
                     "board": self.board, "cameras": self.cam_state, "log": list(self.log)[:60],
                     "history": list(self.history)[:5]}

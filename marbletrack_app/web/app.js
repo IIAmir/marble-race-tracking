@@ -231,6 +231,7 @@ VIEWS.race = {
             <input class="input" id="pwide" placeholder="e.g. 6.5–7.0 @ 105, 15–15.7 @ 90" value="${esc((p.wide_zones || []).map(([a, b, w]) => `${a}–${b} @ ${Math.round(w * 1000)}`).join(", "))}">
             <small>From–to in metres @ inside width in mm, for obstacle zones and splitters wider than the channel width above. The search band follows them.</small></label>
           <label class="toggle"><input type="checkbox" id="pauto" ${p.auto_new_race ? "checked" : ""}> Start a new race automatically when marbles return after the track was clear</label>
+          <label class="toggle"><input type="checkbox" id="prack" ${p.rack_auto_confirm ? "checked" : ""}> Confirm the result by itself when the finish-rack camera agrees with the board</label>
         </div></details>
       </div>
       <div class="card stack">
@@ -249,6 +250,7 @@ VIEWS.race = {
     $("#pchan", el).onchange = (e) => commit("track_width_m", (+e.target.value || 50) / 1000);
     $("#pdia", el).onchange = (e) => commit("marble_diameter_mm", +e.target.value || 25);
     $("#pauto", el).onchange = (e) => commit("auto_new_race", e.target.checked);
+    $("#prack", el).onchange = (e) => commit("rack_auto_confirm", e.target.checked);
     $("#pblind", el).onchange = (e) => {
       const zones = e.target.value.split(/[,;]/).map((x) => x.trim()).filter(Boolean).map((x) => x.split(/\s*[–-]\s*/).map(Number));
       if (zones.some((z) => z.length !== 2 || z.some((v) => !isFinite(v)))) { toast("warn", "Write ranges like 3.6–4.0, separated by commas."); return; }
@@ -323,7 +325,7 @@ VIEWS.cameras = {
     }
     const sec = cams.filter((c) => c.enabled && c.role === "section");
     box.innerHTML = `<div class="cams">${cams.map((c, i) => {
-      const order = c.enabled ? (c.role === "finish" ? "Finish" : `Section ${sec.indexOf(c) + 1}`) : "Not used";
+      const order = c.enabled ? (c.role === "finish" ? "Finish" : c.role === "rack" ? "Finish rack" : `Section ${sec.indexOf(c) + 1}`) : "Not used";
       return `<article class="cam ${c.enabled ? "" : "off"} ${stagger ? "enter" : ""}" data-key="${esc(c.key)}" style="transition-delay:${stagger && !reduceMotion ? Math.min(i, 8) * 40 : 0}ms">
         <div class="thumb">${c.connected ? `<img alt="" data-snap="${esc(c.key)}">` : `<div class="empty">Not connected.<br>Plug it in, then Find cameras.</div>`}
           <span class="order">${order}</span>${c.preview.error ? `<span class="badge chip bad" title="${esc(c.preview.error)}">Error</span>` : ""}</div>
@@ -335,7 +337,7 @@ VIEWS.cameras = {
             <button class="btn icon" data-mv="-1" title="Earlier on the track" aria-label="Move earlier" ${i === 0 ? "disabled" : ""}>${I.up}</button>
             <button class="btn icon" data-mv="1" title="Later on the track" aria-label="Move later" ${i === cams.length - 1 ? "disabled" : ""}>${I.down}</button>
           </div>
-          <select class="input" data-f="role" aria-label="What this camera watches"><option value="section" ${c.role === "section" ? "selected" : ""}>Watches a track section</option><option value="finish" ${c.role === "finish" ? "selected" : ""}>Watches the finish line</option></select>
+          <select class="input" data-f="role" aria-label="What this camera watches"><option value="section" ${c.role === "section" ? "selected" : ""}>Watches a track section</option><option value="finish" ${c.role === "finish" ? "selected" : ""}>Watches the finish line</option><option value="rack" ${c.role === "rack" ? "selected" : ""}>Watches the finish rack</option></select>
           ${c.backend === "demo" ? "" : `<details class="more"><summary>${I.chev}Exposure & colour</summary><div class="stack">
             <label class="toggle"><input type="checkbox" data-f="auto_exposure" ${c.auto_exposure ? "checked" : ""}> Automatic exposure</label>
             <label class="field"><span>Exposure</span><input type="range" min="-13" max="-1" step="1" data-f="exposure" value="${c.exposure ?? -6}" ${c.auto_exposure ? "disabled" : ""}><small>Short exposures stop motion blur. Keep the lighting constant.</small></label>
@@ -555,7 +557,8 @@ VIEWS.waypoints = {
     $("#side").innerHTML = `
       <div class="card stack">
         <h3>${esc(cam.name)}</h3>
-        ${n === 0 ? note("info", `Click the centre of the track at the <b>first mark</b> this camera sees, then the next ones in race direction. Tip: rest a marble on each mark and click its centre.`) : ""}
+        ${cam.role === "rack" ? note("info", `This camera watches the <b>finish rack</b>. Click the centre of every slot, the first finisher's slot first. No distances needed. In step 5, click each marble sitting in the rack to learn its colours here.`)
+          : n === 0 ? note("info", `Click the centre of the track at the <b>first mark</b> this camera sees, then the next ones in race direction. Tip: rest a marble on each mark and click its centre.`) : ""}
         ${n === 1 ? note("info", "Now the next mark in race direction.") : ""}
         ${pendingBreak ? note("info", "Next click starts a <b>new stretch</b>: the first mark of that other part of the track. Then click its label and enter its distance.") : ""}
         <dl class="kv"><dt>Waypoints</dt><dd>${n}</dd><dt>Covers</dt><dd>${(cam.s_ranges || []).length ? cam.s_ranges.map(([a, b]) => `${fmtM(a)} – ${fmtM(b)}`).join("<br>") : "—"}</dd><dt>Spacing</dt><dd>${fmtM(p.marker_spacing)}</dd>
@@ -945,7 +948,7 @@ function paintLive(d) {
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
     new_race: (e) => [`New race (${e.reason})`, ""], camera_offline: (e) => [`${e.name} stopped sending frames`, "bad"], camera_online: (e) => [`${e.name} back online`, "ok"],
     operator: (e) => [`Operator: ${{ swap: `swapped ${e.a} and ${e.b}`, set_order: `set the order ${(e.order || []).join(", ")}`, confirm: e.confirmed ? "confirmed the result" : "reopened the result", freeze: e.on ? "froze the board" : "unfroze the board", hide: e.on ? "took the board off air" : "put the board back on air" }[e.action] || e.action}`, "warn"],
-    rack_check: (e) => [e.match ? "Rack order matches the board" : `Rack order differs from the board: ${e.detail}`, e.match ? "ok" : "bad"],
+    rack_check: (e) => [e.match ? `Finish rack agrees with the board${e.confirmed ? ": result confirmed" : ""}` : `Finish rack: ${e.detail}`, e.match ? "ok" : e.status === "filling" ? "" : "bad"],
     camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
   $("#log").innerHTML = (d.log || []).slice(0, 30).map((e) => {
     const f = KIND[e.kind]; if (!f) return "";

@@ -389,7 +389,7 @@ class App:
     # ------------------------------------------------------------------ step 1: race
     def update_race(self, **fields) -> dict:
         allowed = {"name", "notes", "laps", "track_length", "finish_s", "start_s", "marker_spacing", "track_width_m",
-                   "marble_diameter_mm", "auto_new_race", "blind_zones", "wide_zones"}
+                   "marble_diameter_mm", "auto_new_race", "blind_zones", "wide_zones", "rack_auto_confirm"}
         with self.lock:
             for k, v in fields.items():
                 if k not in allowed:
@@ -473,8 +473,8 @@ class App:
                     raise UserError(f"unknown field {k}")
                 if k == "name":
                     v = str(v).strip()[:60] or cam.name
-                if k == "role" and v not in ("section", "finish"):
-                    raise UserError("role must be section or finish")
+                if k == "role" and v not in ("section", "finish", "rack"):
+                    raise UserError("role must be section, finish or rack")
                 if k == "width_scale":
                     v = float(np.clip(float(v), 0.4, 3.0))
                 if k == "readout_ms":
@@ -567,6 +567,10 @@ class App:
 
     def _renumber(self, cam: CameraSetup, start: float | None = None):
         """Distances: first waypoint at ``start`` (kept if already set), then one spacing per waypoint."""
+        if cam.role == "rack":  # slots, one marble apart: the "distances" only set the marble size in pixels
+            pitch = self.project.marble_diameter_mm / 1000.0
+            cam.marker_s = [round(i * pitch, 4) for i in range(len(cam.markers))]
+            return
         sp = self.project.marker_spacing
         if start is None:
             start = cam.marker_s[0] if cam.marker_s else self._suggest_start(cam)
@@ -955,6 +959,8 @@ class App:
                 self.vmix.publish_board([], None, "hidden")
             else:
                 self.vmix.publish_board(data["board"], data["clock"], data["state"], data.get("result", "provisional"))
+        if kind == "rack_check" and data.get("status") in ("differs", "unreadable"):
+            self.toast("bad", f"Finish rack and board disagree: {data.get('detail')}. Check before confirming the result.")
         s = self.streamer
         if s is None:
             return
@@ -963,7 +969,7 @@ class App:
             s.publish_board(data["race_id"], data["state"], data["clock"], data["board"], rt.cam_state if rt else {},
                             data.get("late", False), result=data.get("result"), hidden=data.get("hidden", False))
         elif kind in ("race_started", "finish", "race_complete", "new_race", "camera_offline", "camera_online", "camera_error",
-                      "operator", "rack_check"):
+                    "operator", "rack_check"):
             s.publish_event(kind, {k: v for k, v in data.items()})
 
     def live_operator(self, action: str, **args) -> dict:

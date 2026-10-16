@@ -23,7 +23,7 @@ ALBEDO = {
     FLOOR: (108, 109, 113), WALL: (120, 121, 125), TOWER: (98, 99, 103), TRUNK: (40, 58, 88),
     FOLIAGE: (60, 140, 70), CAR: (128, 128, 128), CONE: (30, 110, 240), SAND: (150, 196, 222),
     GOLF: (85, 185, 115), HOUSE: (70, 92, 160), ROOF: (62, 62, 72), ROOM: (78, 104, 132), PIN: (150, 151, 155),
-    POST: (100, 101, 105), LINE: (230, 232, 233), TERRAIN: (112, 142, 176), BUMPER: (40, 40, 44), RACK: (70, 71, 76),
+    POST: (100, 101, 105), LINE: (230, 232, 233), TERRAIN: (112, 142, 176), BUMPER: (40, 40, 44), RACK: (196, 198, 200),  # light board behind the rack: the black ball stands out
 }
 BUMPER_CAPS = [(40, 40, 210), (210, 120, 30), (30, 190, 235), (235, 235, 235)]  # red, blue, yellow, white rubber
 FOLIAGE_COLOURS = [(45, 120, 55), (60, 150, 75), (40, 105, 60), (75, 165, 95), (175, 150, 240), (190, 170, 245),
@@ -157,6 +157,12 @@ def build_scene(course: Course, seed: int = 0, grid: float = 0.025) -> Scene:
         cx, cy, rad, z_lo, z_hi = course.helix_axis
         dist_axis = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
         H = np.where(dist_axis < rad + 0.08, np.minimum(H, 0.0), H)
+    # the finish rack stands on open ground: no embankment over it, room in front for a camera
+    rb = np.asarray(course.rack["base"])
+    d_rack = np.hypot(pts[:, 0] - rb[0], pts[:, 1] - rb[1])
+    H = np.where(d_rack < 0.10, np.minimum(H, rb[2] - 0.003), H)
+    ramp = (d_rack >= 0.10) & (d_rack < 0.22)
+    H = np.where(ramp, np.minimum(H, rb[2] - 0.003 + (d_rack - 0.10) * 0.9), H)
     Hg = H.reshape(X.shape)
 
     def height(x, y):

@@ -64,7 +64,7 @@ class CameraSetup:
     device: str
     name: str
     enabled: bool = True
-    role: str = "section"  # section | finish
+    role: str = "section"  # section | finish | rack (sees the finish rack: its slots are clicked instead of waypoints)
     width: int = 0
     height: int = 0
     fps: float = 30.0
@@ -166,6 +166,7 @@ class Project:
     vmix: VmixSetup = field(default_factory=VmixSetup)
     record: RecordSetup = field(default_factory=RecordSetup)
     auto_new_race: bool = True  # start a new race when the track has been empty for a while
+    rack_auto_confirm: bool = False  # confirm the result by itself when the finish rack agrees with the board
     schema: int = SCHEMA_VERSION
 
     @classmethod
