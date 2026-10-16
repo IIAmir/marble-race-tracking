@@ -38,9 +38,29 @@ from .config import Project
 log = logging.getLogger("marbletrack.engine")
 
 
-def _work_scale(w: int, h: int) -> float:
-    # The stress suite ran its detector at 640x480: larger frames are processed downscaled.
-    return min(1.0, max(0.25, np.sqrt(640 * 480 / max(1, w * h))))
+MIN_WORK_RADIUS_PX = 5.0  # smallest marble radius the detector should see after downscaling
+
+
+def _work_scale(w: int, h: int, min_radius_px: float | None = None) -> float:
+    """Processing scale for a camera's frames.
+
+    The stress suite ran its detector at 640x480, so larger frames are processed
+    downscaled to about that pixel count, which keeps 14 cameras within a CPU budget.
+    A wide view in which marbles are small (an overhead 4K camera sees a 25 mm marble
+    as ~10 px) is downscaled less, so that the smallest marble keeps a radius of at
+    least ``MIN_WORK_RADIUS_PX``: below that, colour pixels and blob areas get too
+    few to identify it reliably.
+    """
+    k = np.sqrt(640 * 480 / max(1, w * h))
+    if min_radius_px:
+        k = max(k, MIN_WORK_RADIUS_PX / min_radius_px)
+    return float(min(1.0, max(0.25, k)))
+
+
+def _min_radius_px(calib) -> float:
+    if calib.area_px is not None and len(calib.area_px):
+        return float(np.sqrt(np.min(calib.area_px) / np.pi))
+    return float(calib.marble_radius_px)
 
 
 def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_evt):  # runs in a child process
@@ -66,7 +86,7 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
             raise RuntimeError("camera delivers no frames")
         if frame.shape[1] != w or frame.shape[0] != h:
             raise RuntimeError(f"camera now delivers {frame.shape[1]}x{frame.shape[0]} but was set up at {w}x{h}: redo its setup")
-        det = ColorDetector(calib, work_scale=_work_scale(w, h))
+        det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)))
         out_q.put(("started", key, applied))
         latency = spec.get("latency_ms", 0.0) / 1000.0
         colors = [tuple(int(h[i:i + 2], 16) for i in (5, 3, 1)) for h in spec.get("colors", [])]  # #rrggbb -> BGR

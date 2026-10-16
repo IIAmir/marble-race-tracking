@@ -96,6 +96,22 @@ class ServerSetup:
 
 
 @dataclass
+class VmixSetup:
+    """Leaderboard into a vMix title over the vMix TCP API (see ``marbletrack_app/vmix.py``)."""
+
+    enabled: bool = False
+    host: str = "127.0.0.1"  # vMix on the same PC
+    port: int = 8099
+    input: str = "Leaderboard"  # title input: its name, number or key
+    rows: int = 0  # leaderboard rows in the title; 0 = one per marble
+    name_field: str = "P{n}Name.Text"  # GT titles name text fields "<name>.Text"
+    info_field: str = "P{n}Info.Text"  # finish time, or gap to the leader while racing
+    color_field: str = ""  # e.g. "P{n}Color.Fill.Color" for a colour swatch shape; empty = not used
+    clock_field: str = "Clock.Text"
+    status_field: str = "Status.Text"  # READY / LIVE / FINAL
+
+
+@dataclass
 class Project:
     name: str = "My marble race"
     track_length: float = 0.0  # metres, start gate to end of run-out
@@ -108,6 +124,7 @@ class Project:
     marbles: list[MarbleDef] = field(default_factory=list)
     cameras: list[CameraSetup] = field(default_factory=list)
     server: ServerSetup = field(default_factory=ServerSetup)
+    vmix: VmixSetup = field(default_factory=VmixSetup)
     auto_new_race: bool = True  # start a new race when the track has been empty for a while
     schema: int = SCHEMA_VERSION
 
@@ -165,6 +182,7 @@ class Project:
         return cls(
             marbles=[MarbleDef(**m) for m in d.pop("marbles", [])],
             server=ServerSetup(**d.pop("server", {})),
+            vmix=VmixSetup(**{k: v for k, v in d.pop("vmix", {}).items() if k in VmixSetup.__dataclass_fields__}),
             cameras=cams,
             **{k: v for k, v in d.items() if k in cls.__dataclass_fields__},
         )

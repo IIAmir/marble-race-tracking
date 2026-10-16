@@ -6,6 +6,8 @@ camera**, plus a high-frame-rate finish camera, with multi-camera fusion,
 occlusion handling and a live leaderboard.
 
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+* **Venue equipment** (13 AIDA HD-NDI-IP67 NDI cameras, OBSBOT Tail 2 overhead, vMix, one PC): what it
+  changes, what to measure on site, and the marble colour set: [`docs/EQUIPMENT.md`](docs/EQUIPMENT.md)
 * **Production-readiness report:** [`docs/readiness-report.html`](docs/readiness-report.html)
 * **Windows app for the venue PC** (camera discovery, setup wizard, live tracking, WebSocket leaderboard
   streaming): [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md). Run with `python -m marbletrack_app --demo`, or build
@@ -103,7 +105,7 @@ python scripts/build_report.py                     # production-readiness report
 | `marbletrack/detector.py` | Edge detector (background, colour classification, grouping, projection, adaptation) |
 | `marbletrack/fusion.py` | Association, Kalman filtering, blind zones, camera health, finish timing, leaderboard |
 | `marbletrack/runtime.py` | Multi-process real-time runtime and HTTP/JSON leaderboard publisher |
-| `marbletrack_app/` | Windows desktop app: cameras, setup wizard, live runtime, WebSocket client, UI ([guide](docs/WINDOWS_APP.md)) |
+| `marbletrack_app/` | Windows desktop app: cameras (USB, Basler, NDI), setup wizard, live runtime, vMix title output, WebSocket client, UI ([guide](docs/WINDOWS_APP.md)) |
 | `windows/` | PyInstaller spec, build script, installer, icon |
 | `marbletrack/sim.py` | Race simulator, overhead and planar camera rigs |
 | `marbletrack/sim3d.py` | 3D pinhole cameras at ~45° with depth buffer: walls, tunnels, perspective, occlusion |

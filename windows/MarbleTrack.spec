@@ -1,7 +1,7 @@
 # PyInstaller spec for MarbleTrack.exe (one-folder build: starts fast, fewer antivirus false alarms).
 #   pyinstaller --noconfirm windows/MarbleTrack.spec
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 hidden = (
@@ -18,10 +18,19 @@ for mod in optional:  # bundled when installed on the build machine
     except Exception:
         pass
 
+# NDI cameras (AIDA, OBSBOT): cyndilib ships the NDI runtime DLL in cyndilib/wrapper/bin.
+ndi_datas, ndi_binaries = [], []
+try:
+    ndi_datas, ndi_binaries, ndi_hidden = collect_all("cyndilib")
+    hidden += ndi_hidden
+except Exception:
+    pass
+
 a = Analysis(
     [os.path.join(SPECPATH, "launcher.py")],
     pathex=[ROOT],
-    datas=[(os.path.join(ROOT, "marbletrack_app", "web"), os.path.join("marbletrack_app", "web"))],
+    datas=[(os.path.join(ROOT, "marbletrack_app", "web"), os.path.join("marbletrack_app", "web"))] + ndi_datas,
+    binaries=ndi_binaries,
     hiddenimports=hidden,
     excludes=["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython", "pytest", "hypothesis"],
     noarchive=False,

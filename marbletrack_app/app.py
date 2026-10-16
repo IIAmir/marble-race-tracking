@@ -20,6 +20,7 @@ import numpy as np
 
 from . import __version__
 from . import calibration as C
+from . import vmix
 from .cameras import CameraInfo, DemoSource, LiveCamera, demo_world, discover, make_source
 from .config import CameraSetup, MarbleDef, Project, app_dir, load_project, save_project, slug
 from .engine import Runtime
@@ -58,6 +59,7 @@ class App:
         self.samples: dict = {}  # (cam key, marble id) -> {"pixels": [...], "medians": [...]}
         self.runtime: Runtime | None = None
         self.streamer: LeaderboardStreamer | None = None
+        self.vmix: vmix.VmixClient | None = None
         self.mode = "setup"
         self.step = "race"
         self.demo_scene = "race"
@@ -648,6 +650,28 @@ class App:
         srv = self.project.server
         return test_connection(srv.url, srv.token, srv.station_id)
 
+    def update_vmix(self, **fields) -> dict:
+        with self.lock:
+            v = self.project.vmix
+            for k, val in fields.items():
+                if k == "enabled":
+                    v.enabled = bool(val)
+                elif k == "port":
+                    v.port = int(np.clip(int(val), 1, 65535))
+                elif k == "rows":
+                    v.rows = int(np.clip(int(val), 0, 64))
+                elif k in ("host", "input", "name_field", "info_field", "color_field", "clock_field", "status_field"):
+                    val = str(val).strip()[:120]
+                    if k.endswith("_field") and val and "{n}" not in val and k in ("name_field", "info_field", "color_field"):
+                        raise UserError("Row fields need {n} where the row number goes, e.g. P{n}Name.Text")
+                    setattr(v, k, val or ("127.0.0.1" if k == "host" else val))
+                else:
+                    raise UserError(f"unknown field {k}")
+        return self.state()
+
+    def test_vmix(self) -> dict:
+        return vmix.test_connection(self.project.vmix)
+
     # ------------------------------------------------------------------ live
     def go_live(self) -> dict:
         t_start = time.perf_counter()
@@ -674,6 +698,8 @@ class App:
                                                      "finish_s": self.project.finish_s,
                                                      "marbles": [m.__dict__ for m in self.project.marbles],
                                                      "cameras": [{"key": c.key, "name": c.name, "role": c.role} for c in self.project.active_cameras]}).start()
+            if self.project.vmix.enabled:
+                self.vmix = vmix.VmixClient(self.project.vmix).start()
             self.runtime = rt
             self.mode = "live"
             rt.start()
@@ -694,7 +720,9 @@ class App:
                 self.runtime.stop()
             if self.streamer:
                 self.streamer.stop()
-            self.runtime, self.streamer = None, None
+            if self.vmix:
+                self.vmix.stop()
+            self.runtime, self.streamer, self.vmix = None, None, None
             self.mode = "setup"
             self.step = "review"
         return self.state()
@@ -711,6 +739,8 @@ class App:
         return {"focus": key}
 
     def _on_event(self, kind: str, data: dict):
+        if kind == "board" and self.vmix is not None:
+            self.vmix.publish_board(data["board"], data["clock"], data["state"])
         s = self.streamer
         if s is None:
             return
@@ -724,6 +754,7 @@ class App:
         rt = self.runtime
         out = rt.status() if rt else {}
         out["server"] = self.streamer.status() if self.streamer else {"state": "off", "detail": "Streaming is turned off"}
+        out["vmix"] = self.vmix.status() if self.vmix else {"state": "off", "detail": "vMix output is turned off"}
         out["toasts"] = self.pop_toasts()
         return out
 

@@ -5,6 +5,8 @@ Backends
 * ``opencv``  USB/UVC cameras through DirectShow (Windows) or the platform default.
   Names come from ``cv2_enumerate_cameras`` or ``pygrabber`` when installed.
 * ``pylon``   Basler GigE/USB3 industrial cameras through ``pypylon`` (optional).
+* ``ndi``     NDI and NDI|HX network cameras (AIDA HD-NDI-IP67, OBSBOT Tail 2) through
+  ``cyndilib`` (optional; see ``marbletrack_app/ndi.py`` for how timestamps are made).
 * ``demo``    Virtual cameras rendered by the race simulator (``marbletrack.sim3d``):
   the same 14 angled cameras and finish camera the stress suite was run with, so the
   whole app can be set up and run without hardware.
@@ -211,6 +213,17 @@ class PylonSource:  # pragma: no cover - needs Basler hardware
     def close(self):
         if self.cam is not None:
             self.cam.Close()
+
+
+# ---------------------------------------------------------------------------- NDI
+def discover_ndi(wait: float = 2.0) -> list[CameraInfo]:
+    from . import ndi
+
+    out = []
+    for name in ndi.source_names(wait):
+        # Resolution and frame rate are known once connected; the setup preview fills them in.
+        out.append(CameraInfo(f"ndi:{name}", "ndi", name, f"{name} · {m}" if (m := ndi.guess_model(name)) else name, 0, 0, 60.0))
+    return out
 
 
 # ---------------------------------------------------------------------------- demo rig
@@ -421,7 +434,7 @@ class DemoSource:
 # ---------------------------------------------------------------------------- factory
 def discover(include_demo: bool = False) -> list[CameraInfo]:
     cams = []
-    for fn in (discover_opencv, discover_pylon):
+    for fn in (discover_opencv, discover_pylon, discover_ndi):
         try:
             cams += fn()
         except Exception as e:  # never let one backend break discovery
@@ -436,6 +449,10 @@ def make_source(backend: str, device: str, width=0, height=0, fps=30.0, t0=None)
         return OpenCVSource(device, width, height, fps)
     if backend == "pylon":
         return PylonSource(device, width, height, fps)
+    if backend == "ndi":
+        from .ndi import NDISource
+
+        return NDISource(device, width, height, fps)
     if backend == "demo":
         return DemoSource(device, t0)
     raise ValueError(f"unknown camera backend {backend!r}")

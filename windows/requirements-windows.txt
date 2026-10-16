@@ -5,6 +5,7 @@ opencv-python-headless>=4.8   # includes DirectShow / Media Foundation capture o
 websockets>=13
 pywebview>=5                  # native window on Edge WebView2 (pulls in pythonnet on Windows)
 pygrabber>=0.2                # friendly USB camera names (optional)
+cyndilib>=0.1.3               # NDI / NDI|HX network cameras (AIDA HD-NDI-IP67, OBSBOT Tail 2); bundles the NDI runtime
 # pypylon>=3                  # uncomment for Basler GigE/USB3 industrial cameras
 # Build
 pyinstaller>=6.5

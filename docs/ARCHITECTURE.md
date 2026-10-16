@@ -260,6 +260,10 @@ the filter state.
 
 ## 7. Hardware and network
 
+> The venue uses NDI cameras (13 × AIDA HD-NDI-IP67, OBSBOT Tail 2 overhead), vMix and one PC instead
+> of the industrial cameras below. What that changes (timestamps without PTP, rolling shutter, finish
+> timing at 60 fps, compute shared with vMix, the marble colour set) is in [`EQUIPMENT.md`](EQUIPMENT.md).
+
 **Cameras** (research summary; verify current prices before ordering):
 
 | Role | Candidate | Sensor | fps (full) | Interface | Sync | Approx. price |

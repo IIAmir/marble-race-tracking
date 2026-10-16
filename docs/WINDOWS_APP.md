@@ -2,8 +2,9 @@
 
 A desktop application for the race venue PC. It finds the connected cameras and walks an
 operator through setup step by step. It then runs the real-time tracking engine
-(`marbletrack`) on every camera and streams the live leaderboard to your backend over a
-WebSocket.
+(`marbletrack`) on every camera, fills a vMix title with the live leaderboard and can stream it
+to your backend over a WebSocket. How this fits the venue's cameras and PC:
+[`EQUIPMENT.md`](EQUIPMENT.md).
 
 ```
 cameras ──► one process per camera ─────► fusion thread ──► live screen
@@ -23,6 +24,9 @@ Requirements:
 - **Windows 10 or 11 (64-bit).**
 - **Microsoft Edge WebView2 Runtime** for the app window. Windows 11 includes it, and the installer offers it when missing. Without it, MarbleTrack opens in the default browser instead.
 - **CPU:** about 0.3 cores per 30 fps camera, so 14 cameras plus a finish camera fit an 8-core PC (16 threads).
+- **NDI cameras** (AIDA HD-NDI-IP67, OBSBOT Tail 2, any NDI or NDI|HX sender): supported out of the box; the NDI
+  runtime comes with `cyndilib`. Allow MarbleTrack through the Windows firewall (private network) so that
+  NDI discovery works.
 - **Basler cameras:** they also need pylon and `pypylon` (uncomment it in `requirements-windows.txt` before building).
 
 Command-line options:
@@ -46,7 +50,10 @@ freely; **Go live** unlocks when every step is complete.
    waypoint-mark spacing (default 20 cm). Then add the marbles, with a name and a display
    colour each. Under *More track settings* are the start line for the race clock, the channel
    width, the marble size, tunnels (blind zones) and automatic new races.
-2. **Cameras.** Cameras are found automatically: USB/UVC via DirectShow, and Basler via pylon.
+2. **Cameras.** Cameras are found automatically: USB/UVC via DirectShow, Basler via pylon, and NDI cameras
+   on the network. NDI cameras keep the exposure, shutter and white balance set in their own web page
+   (set a fixed shutter of 1/1000 s or faster there); MarbleTrack never changes them, so vMix's picture is
+   not disturbed.
    For each camera you can:
    - switch it on or off;
    - set its role, *Track section* or *Finish line*;
@@ -74,9 +81,14 @@ freely; **Go live** unlocks when every step is complete.
    - A pair the detector could confuse is flagged with advice. The check uses the same rule as
      the detector: would marble A's blob pass marble B's colour gate?
    - *Copy missing colours from…* is a fallback for cameras that cannot see every marble.
-6. **Leaderboard server.** Enter the WebSocket address (`ws://` or `wss://`), an optional
-   access token and a station name. *Test connection* explains failures in plain words
-   (refused, timeout, DNS, rejected token).
+6. **Leaderboard output.**
+   - *Fill a vMix title*: the vMix computer (127.0.0.1 on the same PC), the title's name and its field
+     names (`P{n}Name.Text`, `P{n}Info.Text`, `Clock.Text`, `Status.Text` by default; `{n}` is the row).
+     *Test vMix* checks that vMix answers, that the title exists and that it has every field. See
+     [EQUIPMENT.md §8](EQUIPMENT.md#8-vmix-output) for the title design.
+   - *Stream to a server*: the WebSocket address (`ws://` or `wss://`), an optional
+     access token and a station name. *Test connection* explains failures in plain words
+     (refused, timeout, DNS, rejected token).
 7. **Review & go live.** Shows a checklist with *Fix* links and the coverage bar.
 
 ## Live screen
@@ -93,6 +105,7 @@ freely; **Go live** unlocks when every step is complete.
 - **Status bar.**
   - Camera health shows how many are online, their frame rates and the slowest processing time.
   - Server connection shows connected or reconnecting, and messages sent.
+  - vMix shows connected or reconnecting, field updates sent, and any field vMix rejected.
   - The race-control log lists starts, finishes and camera problems.
 - **Race control.**
   - The clock starts when the first marble passes the start line.
@@ -184,6 +197,8 @@ It checks that every stage works; accuracy is the stress suite's job.
 | `marbletrack_app/cameras.py` | Discovery (OpenCV/DirectShow, pypylon, demo), frame sources, setup-time grab threads (idle cameras drop to 2 frames/s) |
 | `marbletrack_app/calibration.py` | Clicks → `CameraCalibration`: spline centerline with projective distance interpolation, perspective-scaled track band and marble size, click-to-blob segmentation, robust colour fit (specular glints excluded), palette check |
 | `marbletrack_app/engine.py` | Camera processes (spawned; the same on every OS) and the fusion thread: `ReorderBuffer` → `FusionEngine`, race sessions, previews with detections drawn |
+| `marbletrack_app/ndi.py` | NDI discovery and receiver; `SenderClock` maps camera timestamps to the PC clock without network jitter |
+| `marbletrack_app/vmix.py` | vMix TCP API client: fills a title, sends only changed fields, reconnects; connection test |
 | `marbletrack_app/ws_client.py` | WebSocket client: reconnects, coalesces boards, queues events, explains errors |
 | `marbletrack_app/app.py`, `server.py` | Controller and local server (127.0.0.1 only; every call needs the per-launch token) |
 | `marbletrack_app/web/` | The UI (no build step, no external downloads: works offline at the venue) |

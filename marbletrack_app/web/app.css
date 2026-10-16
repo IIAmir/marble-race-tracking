@@ -263,7 +263,7 @@ details.more > div { margin-top: 14px; }
 .lrow.hid { opacity: .6; }
 .lrow.photo .val { color: var(--warn); }
 
-.status-bar { grid-column: 1 / -1; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.status-bar { grid-column: 1 / -1; display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); gap: 12px; align-items: stretch; }
 .sbox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 2px; min-width: 0; }
 .sbox .k { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
 .sbox .v { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }

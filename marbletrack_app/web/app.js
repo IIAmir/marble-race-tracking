@@ -103,7 +103,7 @@ async function busy(btn, label, fn) {
 /* ------------------------------------------------------------------ layout */
 const STEPS = [
   { id: "race", t: "Race & marbles" }, { id: "cameras", t: "Cameras" }, { id: "waypoints", t: "Track waypoints" },
-  { id: "background", t: "Empty track" }, { id: "colours", t: "Marble colours" }, { id: "server", t: "Leaderboard server" },
+  { id: "background", t: "Empty track" }, { id: "colours", t: "Marble colours" }, { id: "server", t: "Leaderboard output" },
   { id: "review", t: "Review & go live" },
 ];
 const active = () => S.st.cameras.filter((c) => c.enabled);
@@ -116,7 +116,11 @@ function stepSummary(id) {
     case "waypoints": return `${act.filter((c) => c.markers.length >= 2).length} of ${act.length} cameras placed`;
     case "background": return `${act.filter((c) => c.has_background).length} of ${act.length} captured`;
     case "colours": return `${act.filter((c) => p.marbles.every((m) => c.palette[m.id])).length} of ${act.length} cameras complete`;
-    case "server": return p.server.enabled ? (p.server.url ? p.server.url.replace(/^wss?:\/\//, "") : "Address not set") : "Streaming off";
+    case "server": {
+      const ws = p.server.enabled ? (p.server.url ? p.server.url.replace(/^wss?:\/\//, "") : "Address not set") : "";
+      const vm = p.vmix.enabled ? `vMix: ${p.vmix.input}` : "";
+      return [ws, vm].filter(Boolean).join(" · ") || "No output";
+    }
     case "review": { const n = st.steps.review.length; return n ? `${plural(n, "thing")} left` : "Ready to go live"; }
   }
 }
@@ -682,7 +686,21 @@ VIEWS.colours = {
 VIEWS.server = {
   mount(el) {
     const s = S.st.project.server;
-    el.innerHTML = head("Leaderboard server", "MarbleTrack sends the live leaderboard to your backend over a WebSocket, about ten times a second, plus an event for every start, finish and camera problem.") + `
+    const v = S.st.project.vmix;
+    el.innerHTML = head("Leaderboard output", "MarbleTrack fills a vMix title with the live leaderboard, and can also send it to your backend over a WebSocket, about ten times a second, plus an event for every start, finish and camera problem.") + `
+      <div class="card stack">
+        <label class="toggle"><input type="checkbox" id="ven" ${v.enabled ? "checked" : ""}> Fill a vMix title</label>
+        <div class="grid2" id="vform">
+          <label class="field"><span>vMix computer</span><input class="input" id="vhost" value="${esc(v.host)}" spellcheck="false"><small>127.0.0.1 when vMix runs on this PC. Uses the vMix TCP API (port ${esc(v.port)}).</small></label>
+          <label class="field"><span>Title input</span><input class="input" id="vinput" value="${esc(v.input)}" spellcheck="false"><small>The title's name or number in vMix.</small></label>
+          <label class="field"><span>Name field</span><input class="input" id="vname" value="${esc(v.name_field)}" spellcheck="false"><small>{n} is the row: P1Name.Text, P2Name.Text, …</small></label>
+          <label class="field"><span>Time / gap field</span><input class="input" id="vinfo" value="${esc(v.info_field)}" spellcheck="false"><small>Finish time, or the gap to the leader while racing.</small></label>
+          <label class="field"><span>Colour swatch</span><input class="input" id="vcolor" value="${esc(v.color_field)}" spellcheck="false" placeholder="e.g. P{n}Color.Fill.Color"><small>A shape filled with the marble's colour. Optional.</small></label>
+          <label class="field"><span>Clock and status fields</span><div class="row" style="flex-wrap:nowrap"><input class="input" id="vclock" value="${esc(v.clock_field)}" spellcheck="false"><input class="input" id="vstatus" value="${esc(v.status_field)}" spellcheck="false"></div><small>Race clock; READY / LIVE / FINAL. Leave empty to skip.</small></label>
+          ${num("vrows", "Rows in the title", v.rows, "rows", "1", "0 = one row per marble.")}
+        </div>
+        <div class="row"><button class="btn" id="vtest">Test vMix</button><span id="vres" class="hint" aria-live="polite"></span></div>
+      </div>` + `
       <div class="card stack">
         <label class="toggle"><input type="checkbox" id="sen" ${s.enabled ? "checked" : ""}> Stream to a server</label>
         <div class="grid2" id="sform">
@@ -701,6 +719,18 @@ VIEWS.server = {
 
 {"schema":"marbletrack.v1","type":"race_event","event":"finish","race_id":"3f2a…",
  "marble_id":"ruby","name":"Ruby","rank":1,"time":12.4183, …}</pre></div></details>`;
+    const setv = (k, val) => api("update_vmix", { [k]: val });
+    $("#ven", el).onchange = (e) => { setv("enabled", e.target.checked); $("#vform").style.opacity = e.target.checked ? 1 : 0.5; };
+    $("#vform").style.opacity = v.enabled ? 1 : 0.5;
+    [["vhost", "host"], ["vinput", "input"], ["vname", "name_field"], ["vinfo", "info_field"], ["vcolor", "color_field"],
+     ["vclock", "clock_field"], ["vstatus", "status_field"]].forEach(([id, k]) => { $(`#${id}`, el).onchange = (e) => setv(k, e.target.value); });
+    $("#vrows", el).onchange = (e) => setv("rows", +e.target.value || 0);
+    $("#vtest", el).onclick = (e) => busy(e.currentTarget, "Connecting…", async () => {
+      document.activeElement?.blur();
+      await new Promise((r) => setTimeout(r, 50));
+      const r = await api("test_vmix", {}, { mutates: false });
+      $("#vres").innerHTML = r.ok ? `<span class="chip ok">${I.check}${esc(r.detail)}</span>` : `<span class="chip bad">Failed</span> ${esc(r.detail)}`;
+    });
     const set = (k, v) => api("update_server", { [k]: v });
     $("#sen", el).onchange = (e) => { set("enabled", e.target.checked); $("#sform").style.opacity = e.target.checked ? 1 : 0.5; };
     $("#sform").style.opacity = s.enabled ? 1 : 0.5;
@@ -759,6 +789,7 @@ function renderLive() {
       <div class="status-bar">
         <div class="sbox"><span class="k">Cameras</span><span class="v" id="camsum"></span><span class="d" id="camdet"></span></div>
         <div class="sbox"><span class="k">Leaderboard server</span><span class="v" id="srv"></span><span class="d" id="srvdet"></span></div>
+        <div class="sbox"><span class="k">vMix</span><span class="v" id="vmx"></span><span class="d" id="vmxdet"></span></div>
         <div class="sbox"><span class="k">Race control</span><div class="log" id="log"></div></div>
       </div>`;
     $("#tiles").onclick = (e) => { const t = e.target.closest(".tile"); if (t) setFocus(t.dataset.k); };
@@ -827,6 +858,10 @@ function paintLive(d) {
   $("#srv").innerHTML = `<span class="led ${led}"></span>${esc({ connected: "Connected", connecting: "Connecting…", reconnecting: "Reconnecting…", error: "Not connected", off: "Off", stopped: "Stopped" }[s.state] || s.state || "—")}`;
   $("#srvdet").textContent = s.state === "connected" ? `${(s.sent || 0).toLocaleString()} messages sent` : s.detail || "";
   $("#srvdet").title = s.detail || "";
+  const vm = d.vmix || {};
+  $("#vmx").innerHTML = `<span class="led ${{ connected: vm.errors ? "warn" : "ok", connecting: "warn", reconnecting: "warn" }[vm.state] ?? ""}"></span>${esc({ connected: "Connected", connecting: "Connecting…", reconnecting: "Reconnecting…", off: "Off", stopped: "Stopped" }[vm.state] || vm.state || "—")}`;
+  $("#vmxdet").textContent = vm.state === "connected" ? (vm.errors ? `${vm.errors} rejected · ${vm.last_error}` : `${(vm.sent || 0).toLocaleString()} field updates`) : vm.detail || "";
+  $("#vmxdet").title = vm.last_error || vm.detail || "";
   // race control log
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
     new_race: (e) => [`New race (${e.reason})`, ""], camera_offline: (e) => [`${e.name} stopped sending frames`, "bad"], camera_online: (e) => [`${e.name} back online`, "ok"],
