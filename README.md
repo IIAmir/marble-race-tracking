@@ -5,6 +5,7 @@ Real-time identification, tracking and ranking of colour-coded marbles from
 camera**, plus a high-frame-rate finish camera, with multi-camera fusion,
 occlusion handling and a live leaderboard.
 
+* **Showing it (demo guide):** [`docs/DEMO.md`](docs/DEMO.md); venue race video: [`results/venue_race.mp4`](results/venue_race.mp4)
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 * **Venue equipment** (13 AIDA HD-NDI-IP67 NDI cameras, OBSBOT Tail 2 overhead, vMix, one PC): what it
   changes, what to measure on site, and the marble colour set: [`docs/EQUIPMENT.md`](docs/EQUIPMENT.md)

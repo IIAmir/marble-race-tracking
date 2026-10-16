@@ -83,6 +83,17 @@ caught one over-eager first version (see 3).
    the others' is left out, and the operator is told to click where the marble
    stands out.
 
+8. **A finish missed at the line.** Route 5: the finish line lay 9 mm past the finish camera's
+   last waypoint, so the black ball's crossing was never seen and it was ranked last. *Fix*:
+   step 7 warns when no camera's waypoints reach 5 cm past the line, and a marble last seen
+   heading for the line within 50 cm gets an estimated finish, flagged for review.
+
+9. **Lost balls competing with followed ones.** *Fix*: the matching cascade of DeepSORT:
+   balls seen in the last few frames are matched first, hidden or lost ones only get what is
+   left. Over five routes it cut phantom overtakes from 36 to 27 and identity errors from 102
+   to 73. A stricter rule (re-identify a lost ball only from a clearly-coloured blob) was tried
+   and dropped: two routes failed with it.
+
 The simulator's own installer was also made more honest along the way: camera
 spots are checked with a depth render of the whole scene (a tree in front of a
 camera used to pass the terrain-only test), so the coverage it reports, about
@@ -91,9 +102,32 @@ tests: balls bounce back into them off spinners and sit there for seconds.
 
 ## Results
 
-See `results/venue.json` (written by the suite) and the summary in
-EQUIPMENT.md §12. The figures there are reported as they came out, including
-the races that were not tuned on.
+Seven routes, one race each (10 marbles, one lap of 30–38 m, 14 cameras), scored with the
+current tracker (`python scripts/venue_suite.py --rescore --seeds 1 2 3 4 5 6 7 --cache cache`,
+`results/venue_rescored.json`). Routes 1–4 were used to find and fix the problems above;
+routes 5–7 were never looked at before this table.
+
+| Route | Ranks right (visible marbles) | Phantom overtakes shown | Final order | Finish time error (max) |
+|---|---|---|---|---|
+| 1 | 99.73 % | 1 | correct | 5.0 ms |
+| 2 | 98.70 % | 7 | correct | 3.4 ms |
+| 3 | 99.93 % | 0 | correct | 9.2 ms |
+| 4 | 99.33 % | 6 | correct | 3.3 ms |
+| 5 (held out) | 99.88 % | 13 | correct | 2.0 ms |
+| 6 (held out) | 100.00 % | 1 | correct | 3.6 ms |
+| 7 (held out) | 99.94 % | 3 | correct | 7.6 ms |
+
+The final order is right on all seven routes, and on route 5 only because a finish missed at
+the line is now estimated and flagged for review (fix 8 above; on site the rack check would
+have caught it too). The remaining phantom overtakes are mostly marbles shown passing a
+marble that was lost in a coverage gap, and short identity mix-ups between similar colours
+seen small from the overhead camera: on site, the operator console and the rack check are
+there for exactly these. `results/venue_race.mp4` shows route 6: nine of the cameras with the
+tracker's detections, and the live board beside the true order.
+
+Every rule was also checked by switching it off (ablation over the routes) and against the
+original stress suite (66 races, independent renderer): none made the stress suite worse, and
+a rule that helped one route but hurt others was dropped.
 
 ## Limits: what the simulator cannot prove
 
