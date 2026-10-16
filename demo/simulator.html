@@ -1611,7 +1611,9 @@ function simulate(dt) {
   // with a short grace after the last true crossing, or at the 4-minute cap
   if (W.state === "racing") {
     if (P.finishedCount === P.m.length) W.allInT ??= P.t;
-    if (W.tracker.m.every((m) => m.finishT != null) || P.t - (W.allInT ?? Infinity) > 2 || P.t - W.raceT0 > 240) finishRace();
+    if (W.tracker.m.every((m) => m.finishT != null)) W.trackerInT ??= P.t;
+    // the tracker can call a crossing a frame before the ball is truly over the line: give the truth a second to catch up
+    if (W.allInT != null && W.trackerInT != null || P.t - (W.trackerInT ?? Infinity) > 1 || P.t - (W.allInT ?? Infinity) > 2 || P.t - W.raceT0 > 240) finishRace();
   }
 }
 
