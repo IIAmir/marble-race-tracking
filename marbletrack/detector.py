@@ -163,11 +163,15 @@ class ColorDetector:
         color_alpha: float = 0.03,
         work_scale: float = 1.0,
         shadows: bool = True,
+        readout: float = 0.0,
     ):
         if calib.background is None or not calib.palette:
             raise ValueError("camera needs a background and a colour palette")
         self.work_scale = work_scale
         self.shadows = shadows
+        # Rolling shutter: rows are exposed one after another over ``readout`` seconds. ``t`` passed
+        # to detect() is the middle row's time; each detection gets its own row's time.
+        self.readout = float(readout)
         # fragment merging (see _merge_fragments), relative to the expected marble radius / area
         self.merge_dist, self.merge_union, self.merge_shade = 1.5, 1.4, 20.0
         self.full_size = calib.track_mask.shape[::-1]
@@ -258,8 +262,13 @@ class ColorDetector:
             dets = self._detect(frame, t)
             for d in dets:
                 d.xy = d.xy / self.work_scale
-            return dets
-        return self._detect(frame, t)
+        else:
+            dets = self._detect(frame, t)
+        if self.readout:
+            h = self.full_size[1]
+            for d in dets:
+                d.t = t + (float(d.xy[1]) / h - 0.5) * self.readout
+        return dets
 
     def _detect(self, frame: np.ndarray, t: float) -> list[Detection]:
         self.gain = self._measure_gain(frame)

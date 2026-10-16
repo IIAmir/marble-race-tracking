@@ -71,7 +71,8 @@ class CameraSetup:
     auto_exposure: bool = False
     exposure: float | None = None  # backend units (DirectShow: log2 seconds, e.g. -6)
     auto_white_balance: bool = False
-    latency_ms: float = 0.0  # capture-to-timestamp delay to subtract (USB cameras: ~30-60 ms)
+    latency_ms: float = 0.0  # capture-to-timestamp delay to subtract (USB cameras: ~30-60 ms), to the middle row
+    readout_ms: float = 0.0  # rolling shutter: time from the first to the last row (0 = global shutter / unknown)
     # Track waypoints: image points (native pixels) of distance marks, in race direction.
     markers: list[list[float]] = field(default_factory=list)
     marker_s: list[float] = field(default_factory=list)  # track distance (m) of each marker

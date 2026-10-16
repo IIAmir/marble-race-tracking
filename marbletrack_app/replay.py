@@ -46,12 +46,12 @@ def _detect_camera(args):
 
     from .engine import _min_radius_px, _work_scale
 
-    folder, key, name, calib_blob, latency = args
+    folder, key, name, calib_blob, latency, readout = args
     calib = pickle.loads(calib_blob)
     rows = read_frames_csv(Path(folder) / "cameras" / f"{name}.csv")
     cap = cv2.VideoCapture(str(Path(folder) / "cameras" / f"{name}.avi"))
     h, w = calib.track_mask.shape
-    det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)))
+    det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)), readout=readout)
     out = []
     t_detect = 0.0
     for _, t_capture, t_arrival in rows:
@@ -72,7 +72,8 @@ def detect_session(folder: Path, project: Project, backgrounds: dict, manifest: 
         if cam.key not in manifest["cameras"]:
             continue
         calib = C.build_calibration(cam, project, backgrounds.get(cam.key))
-        jobs.append((str(folder), cam.key, manifest["cameras"][cam.key], pickle.dumps(calib), cam.latency_ms / 1000.0))
+        jobs.append((str(folder), cam.key, manifest["cameras"][cam.key], pickle.dumps(calib), cam.latency_ms / 1000.0,
+                     cam.readout_ms / 1000.0))
     results, stats = {}, {}
     with get_context("spawn").Pool(max(1, workers)) as pool:
         for key, dets, st in pool.imap_unordered(_detect_camera, jobs):

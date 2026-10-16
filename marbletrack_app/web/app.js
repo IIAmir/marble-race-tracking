@@ -342,6 +342,7 @@ VIEWS.cameras = {
             <label class="toggle"><input type="checkbox" data-f="auto_white_balance" ${c.auto_white_balance ? "checked" : ""}> Automatic white balance</label>
             <small class="hint">Lock both for racing: automatic changes shift the marble colours the tracker learned.</small>
             ${num("lat-" + i, "Camera delay", c.latency_ms, "ms", "1", "Time from exposure to the PC. USB webcams: about 40 ms.").replace('id="lat-' + i + '"', `data-f="latency_ms"`)}
+            ${num("ro-" + i, "Sensor readout", c.readout_ms || 0, "ms", "0.1", "Rolling-shutter cameras expose the rows one after another; each marble is timed by its own row. From the camera's data sheet, or measured; 0 for a global shutter.").replace('id="ro-' + i + '"', `data-f="readout_ms"`)}
           </div></details>`}
           ${c.connected ? "" : `<button class="btn sm ghost danger" data-forget>Remove from project</button>`}
         </div></article>`;

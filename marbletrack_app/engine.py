@@ -86,7 +86,8 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
             raise RuntimeError("camera delivers no frames")
         if frame.shape[1] != w or frame.shape[0] != h:
             raise RuntimeError(f"camera now delivers {frame.shape[1]}x{frame.shape[0]} but was set up at {w}x{h}: redo its setup")
-        det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)))
+        det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)),
+                            readout=spec.get("readout_ms", 0.0) / 1000.0)
         if spec.get("record_dir"):
             from .recording import FrameRecorder
 
@@ -221,7 +222,8 @@ class Runtime:
         for cam in self.project.active_cameras:
             spec = dict(key=cam.key, backend=cam.backend, device=cam.device, width=cam.width, height=cam.height,
                         fps=cam.fps, auto_exposure=cam.auto_exposure, exposure=cam.exposure,
-                        auto_white_balance=cam.auto_white_balance, latency_ms=cam.latency_ms, demo_pickle=self.demo_pickles.get(cam.key),
+                        auto_white_balance=cam.auto_white_balance, latency_ms=cam.latency_ms, readout_ms=cam.readout_ms,
+                        demo_pickle=self.demo_pickles.get(cam.key),
                         colors=[m.color for m in self.project.marbles],
                         record_dir=str(self.record_dir) if self.record_dir is not None else None,
                         record_quality=self.project.record.jpeg_quality)

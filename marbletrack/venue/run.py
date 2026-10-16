@@ -60,6 +60,7 @@ class VenueScenario:
     latency_error_ms: float = 1.0  # how well the per-camera latency was measured on site
     outages: tuple = ()  # (camera id, t_off, t_on)
     duration_cap: float | None = None  # stop the race early (tests)
+    row_times: bool = True  # each detection timed by its image row (the camera's readout entered on site)
     extra: dict = field(default_factory=dict)
 
 
@@ -212,7 +213,8 @@ def _camera_job(args):
         return {"cam_id": spec.cam_id, "ok": False, "reason": str(e)}
     setup_s = time.time() - t0
     W, H = cam.size
-    det = ColorDetector(calib, work_scale=_work_scale(W, H, _min_radius_px(calib)))
+    det = ColorDetector(calib, work_scale=_work_scale(W, H, _min_radius_px(calib)),
+                        readout=spec.optics.readout if sc.row_times else 0.0)
     o = spec.optics
     enc_latency = 0.035 if "AIDA" in o.model else 0.05
     clock_offset = rng.uniform(-3, 3)  # the camera's own clock

@@ -433,10 +433,12 @@ class FusionEngine:
 
     # -- association -------------------------------------------------------
     def process(self, t: float, detections: list[Detection], cam_id: str | None = None) -> None:
-        """Ingest one camera frame's detections, all captured at time ``t``.
+        """Ingest one camera frame's detections, captured at about time ``t``.
 
         Call it for every frame, including frames with no detections: the call
-        doubles as the camera's heartbeat.
+        doubles as the camera's heartbeat. A detection may carry its own capture
+        time (``Detection.t``, e.g. its image row's time under a rolling shutter);
+        it is used when it lies within 50 ms of ``t``.
         """
         if not np.isfinite(t):
             return
@@ -447,9 +449,11 @@ class FusionEngine:
         if cam_id is not None:
             self._last_frame[cam_id] = max(t, self._last_frame.get(cam_id, t))
         self._check_health()
+        td = [d.t if np.isfinite(d.t) and abs(d.t - t) <= 0.05 else t for d in detections]
+        t_pred = max([t] + td)  # predict to the latest row; earlier rows are handled as slightly late
         for m in self.marbles:
             if m.initialized:
-                self._predict(m, t)
+                self._predict(m, t_pred)
         if not detections:
             return
         cost = np.full((len(detections), len(self.marbles)), _INF)
@@ -491,7 +495,7 @@ class FusionEngine:
                     if cand.s < floor[j]:
                         continue
                     r = self._r(det, cand)
-                    _, y, S = self._innovation(m, t, cand.s, r)
+                    _, y, S = self._innovation(m, td[i], cand.s, r)
                     md = y**2 / S
                     if best is None or md < best[0]:
                         best = (md, cand.s, r, det.sigma_s(cand) ** 2, self._bias(det, cand), S)
@@ -504,7 +508,7 @@ class FusionEngine:
         rows, cols = linear_sum_assignment(cost)
         for i, j in zip(rows, cols):
             if cost[i, j] < _INF:
-                self._update(self.marbles[j], t, *choice[i, j], cam_id=cam_id)
+                self._update(self.marbles[j], td[i], *choice[i, j], cam_id=cam_id)
                 d2 = detections[i].color_d2
                 rival = float(np.min(np.delete(d2, j))) if len(d2) > 1 else float("inf")
                 self.marbles[j].last_color = (float(d2[j]), rival)
@@ -550,9 +554,14 @@ class FusionEngine:
                 racing.insert(pos, i)
                 m.placed = True
 
+        def at_now(m) -> float:
+            # Each filter state is at its last update's time (a camera frame, or one image
+            # row of it under a rolling shutter); compare everyone at the same instant.
+            return float(m.x[0] + m.x[1] * np.clip(now - m.t, -0.05, 0.05))
+
         def key(i: int) -> float:
             m = self.marbles[i]
-            return m.x[0] if m.initialized else -np.inf
+            return at_now(m) if m.initialized else -np.inf
 
         status = {i: self.status(self.marbles[i], now) for i in racing}
         observed = {i: status[i] == "tracking" for i in racing}
@@ -636,11 +645,11 @@ class FusionEngine:
                 LeaderboardEntry(
                     rank=rank,
                     marble_id=m.marble_id,
-                    progress_m=float(m.x[0]) if m.initialized else 0.0,
+                    progress_m=(at_now(m) if m.finish_time is None else float(m.x[0])) if m.initialized else 0.0,
                     speed_mps=float(m.x[1]) if m.initialized else 0.0,
                     status=st,
                     finish_time=m.finish_time,
-                    gap_m=0.0 if st == "finished" or not m.initialized else float(leader_s - m.x[0]),
+                    gap_m=0.0 if st == "finished" or not m.initialized else float(leader_s - at_now(m)),
                     photo_finish=i in close,
                     lap=self.lap_of(m),
                 )

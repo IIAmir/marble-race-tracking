@@ -79,3 +79,25 @@ def test_vmix_lap_field():
     board[0]["lap"] = 3
     assert vmix.board_fields(cfg, board, 10.0, "running", laps=3)["Lap.Text"] == ("SetText", "FINAL LAP")
     assert "Lap.Text" not in vmix.board_fields(VmixSetup(), board, 10.0, "running", laps=3)
+
+
+def test_detections_timed_by_their_image_row():
+    """Rolling shutter: a marble low in the frame was exposed later than one high in the frame."""
+    from dataclasses import replace
+
+    readout, v = 0.0145, 2.5
+    errs = {}
+    for per_row in (False, True):
+        eng = FusionEngine(["top", "bottom"], 50.0, 60.0, cameras={"cam": [(0.0, 60.0)]})
+        for t in np.arange(0.0, 2.0, 1 / 60):
+            row_dt = {"top": -0.45 * readout, "bottom": 0.45 * readout}  # rows near the top / bottom edge
+            dets = []
+            for k, m in enumerate(("top", "bottom")):
+                tr = t + row_dt[m]  # when this marble's rows were exposed
+                d = _det("cam", t, 1.0 + k * 0.1 + v * tr, k)
+                dets.append(replace(d, t=tr) if per_row else d)
+            eng.process(t, dets, "cam")
+        b = {e.marble_id: e for e in eng.leaderboard(t)}
+        errs[per_row] = max(abs(b["top"].progress_m - (1.0 + v * t)), abs(b["bottom"].progress_m - (1.1 + v * t)))
+    assert errs[False] > 0.012  # ~1.6 cm at 2.5 m/s from timing alone
+    assert errs[True] < 0.004

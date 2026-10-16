@@ -465,7 +465,7 @@ class App:
 
     def update_camera(self, key: str, **fields) -> dict:
         allowed = {"name", "enabled", "role", "auto_exposure", "exposure", "auto_white_balance", "latency_ms",
-                   "width_scale", "fps"}
+                   "readout_ms", "width_scale", "fps"}
         with self.lock:
             cam = self._cam(key)
             for k, v in fields.items():
@@ -477,6 +477,8 @@ class App:
                     raise UserError("role must be section or finish")
                 if k == "width_scale":
                     v = float(np.clip(float(v), 0.4, 3.0))
+                if k == "readout_ms":
+                    v = float(np.clip(float(v or 0), 0.0, 60.0))
                 setattr(cam, k, v)
             if {"auto_exposure", "exposure", "auto_white_balance"} & fields.keys() and key in self.hub:
                 src = self.hub[key].source
