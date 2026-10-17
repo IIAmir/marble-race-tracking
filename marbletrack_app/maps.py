@@ -28,11 +28,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .config import Project, slug
+from .config import _RESERVED, Project, save_project, slug
 
 log = logging.getLogger("marbletrack.maps")
 
-MAX_IMPORT_BYTES = 512 * 2**20
+MAX_IMPORT_BYTES = 512 * 2**20  # the zip as sent
+MAX_UNPACKED_BYTES = 1024 * 2**20  # what it unpacks to (a map is a JSON file and one image per camera)
+MAX_IMPORT_FILES = 400
 
 
 def now_iso() -> str:
@@ -58,14 +60,16 @@ def summary(folder: Path) -> dict | None:
             d = json.load(f)
     except Exception:
         return None
-    cams = d.get("cameras", [])
+    if not isinstance(d, dict):
+        return None
+    cams = [c for c in d.get("cameras", []) if isinstance(c, dict)] if isinstance(d.get("cameras"), list) else []
     return {
         "folder": str(folder),
         "name": d.get("name") or folder.name,
         "notes": d.get("notes", ""),
         "saved_at": d.get("saved_at", ""),
         "track_length": d.get("track_length", 0.0),
-        "marbles": len(d.get("marbles", [])),
+        "marbles": len(d.get("marbles", [])) if isinstance(d.get("marbles"), list) else 0,
         "cameras": sum(1 for c in cams if c.get("enabled", True)),
         "cameras_set_up": sum(1 for c in cams if c.get("enabled", True) and len(c.get("markers", [])) >= 2),
     }
@@ -73,7 +77,7 @@ def summary(folder: Path) -> dict | None:
 
 def list_maps(home: Path) -> list[dict]:
     root = projects_dir(home)
-    out = [s for f in sorted(root.iterdir()) if f.is_dir() and (s := summary(f))] if root.exists() else []
+    out = [s for f in sorted(root.iterdir()) if f.is_dir() and not f.name.startswith(".") and (s := summary(f))] if root.exists() else []
     return sorted(out, key=lambda s: s["saved_at"] or "", reverse=True)
 
 
@@ -92,7 +96,12 @@ def export_zip(folder: Path, out_dir: Path) -> Path:
     path = out_dir / f"{slug(s['name'])}-{datetime.now().strftime('%Y%m%d-%H%M')}.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(folder.iterdir()):
-            if f.is_file() and not f.name.startswith(".project-"):
+            if f.name == "project.json":
+                # the server's access token stays on this PC: a zip is shared and kept for years
+                d = json.loads(f.read_text(encoding="utf-8"))
+                d.setdefault("server", {})["token"] = ""
+                z.writestr("project.json", json.dumps(d, indent=2))
+            elif f.is_file() and not f.name.startswith("."):  # no temp files
                 z.write(f, f.name)
     return path
 
@@ -108,17 +117,41 @@ def import_zip(data: bytes, home: Path) -> Path:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         raise ValueError("not a zip file")
-    names = [i.filename for i in z.infolist() if not i.is_dir()]
+    infos = [i for i in z.infolist() if not i.is_dir()]
+    names = [i.filename for i in infos]
     if "project.json" not in names:
         raise ValueError("the zip has no project.json: not a MarbleTrack map")
+    if len(infos) > MAX_IMPORT_FILES or sum(i.file_size for i in infos) > MAX_UNPACKED_BYTES:
+        raise ValueError("file too large to be a MarbleTrack map")
     for n in names:
-        if not _SAFE.match(n):
+        if not _SAFE.match(n) or n.split(".")[0].upper() in _RESERVED:
             raise ValueError(f"unexpected file in the zip: {n}")
-    project = Project.from_dict(json.loads(z.read("project.json")))  # validates before anything is written
+    try:  # validates before anything is written
+        d = json.loads(z.read("project.json"))
+        if not isinstance(d, dict):
+            raise TypeError("not an object")
+        project = Project.from_dict(d)
+    except (zipfile.BadZipFile, ValueError, TypeError, KeyError, AttributeError) as e:
+        raise ValueError(f"the zip's project.json is not a MarbleTrack map ({e})") from None
+    # settings that point outside the map belong to the PC that made it
+    project.record.folder = ""
+    project.server.token = ""
     folder = unique_folder(home, project.name)
-    folder.mkdir(parents=True)
-    for n in names:
-        (folder / n).write_bytes(z.read(n))
+    tmp = folder.with_name(f".import-{folder.name}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    try:
+        for i in infos:
+            if i.filename != "project.json":
+                (tmp / i.filename).write_bytes(z.read(i))
+        save_project(project, tmp)
+        tmp.rename(folder)  # the map appears complete or not at all
+    except zipfile.BadZipFile as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise ValueError(f"the zip is damaged ({e})") from None
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     return folder
 
 

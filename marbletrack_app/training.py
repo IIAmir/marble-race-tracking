@@ -23,6 +23,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .imageio import imwrite
+
 SIZE = 64
 
 
@@ -60,7 +62,7 @@ class CropWriter:
             pair = [cv2.resize(img[y0:y1, x0:x1], (SIZE, SIZE), interpolation=cv2.INTER_AREA) for img in (frame, self.background)]
             n = self.counts.get(label, 0)
             name = f"{self.cam}-{n:06d}.png"
-            cv2.imwrite(str(out / name), np.hstack(pair))
+            imwrite(out / name, np.hstack(pair))
             self._logs[label].write(json.dumps({"file": name, "t": round(t, 4), "xy": [x, y], "radius_px": round(float(r), 2),
                                                 "color_d2": [round(float(v), 2) for v in d.color_d2]}) + "\n")
             self.counts[label] = n + 1

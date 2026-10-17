@@ -10,6 +10,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -33,9 +34,30 @@ def app_dir() -> Path:
     return Path.home() / ".marbletrack"
 
 
-def slug(text: str) -> str:
-    s = re.sub(r"[^A-Za-z0-9._-]+", "-", text.strip()).strip("-.")
-    return s[:60] or "project"
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def slug(text: str, default: str = "project") -> str:
+    """A file or folder name from free text: letters of any script, digits, '.', '_' and '-'
+    (a Persian map name stays readable in Explorer); never a name Windows reserves."""
+    s = re.sub(r"[^\w.-]+", "-", text.strip()).strip("-. ")[:60].rstrip("-. ")
+    head, dot, rest = s.partition(".")
+    if head.upper() in _RESERVED:  # Windows reserves "aux" with any extension too
+        s = f"{head}-map{dot}{rest}"
+    return s or default
+
+
+def file_key(key: str) -> str:
+    """An ASCII file name part for a camera key, unique per key (two NDI names that differ only in
+    non-Latin letters, or after 40 characters, do not share a file)."""
+    import zlib
+
+    plain = re.sub(r"[^A-Za-z0-9._-]+", "-", key).strip("-.")[:40] or "camera"
+    return f"{plain}-{zlib.crc32(key.encode('utf-8')):08x}"
+
+
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_FILE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass
@@ -230,9 +252,19 @@ class Project:
         for c in d.pop("cameras", []):
             c = known(CameraSetup, c)
             c["palette"] = {k: ColorSample(**known(ColorSample, v)) for k, v in c.get("palette", {}).items()}
+            # a map can come from a zip someone sent: its image file is a plain name inside the map folder
+            if c.get("background_file") and not _FILE.match(str(c["background_file"])):
+                c["background_file"] = None
+            # numbers stay numbers (they are drawn into the page)
+            c["markers"] = [[float(x), float(y)] for x, y in c.get("markers", [])]
+            c["marker_s"] = [float(v) for v in c.get("marker_s", [])]
             cams.append(CameraSetup(**c))
+        marbles = [MarbleDef(**known(MarbleDef, m)) for m in d.pop("marbles", [])]
+        for m in marbles:
+            if not _HEX.match(str(m.color)):
+                m.color = "#888888"
         return cls(
-            marbles=[MarbleDef(**known(MarbleDef, m)) for m in d.pop("marbles", [])],
+            marbles=marbles,
             server=ServerSetup(**known(ServerSetup, d.pop("server", {}))),
             record=RecordSetup(**known(RecordSetup, d.pop("record", {}))),
             vmix=VmixSetup(**{k: v for k, v in d.pop("vmix", {}).items() if k in VmixSetup.__dataclass_fields__}),
@@ -241,14 +273,37 @@ class Project:
         )
 
 
+def replace_file(tmp: str | Path, path: str | Path, tries: int = 10) -> None:
+    """``os.replace``, retried: on Windows it fails while another thread or a virus scanner has the
+    target open for a moment."""
+    for k in range(tries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if k == tries - 1:
+                raise
+            time.sleep(0.05 * (k + 1))
+
+
 def save_project(project: Project, folder: Path) -> Path:
-    """Atomic save: write to a temp file, then replace (a crash never leaves half a file)."""
+    """Atomic, durable save: a temp file written to disk, then swapped in. A crash or a power cut
+    leaves either the old map or the new one, never half a file."""
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "project.json"
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".project-", suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(project.to_dict(), f, indent=2)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(project.to_dict(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        replace_file(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 

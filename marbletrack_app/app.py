@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import pickle
+import re
 import tempfile
 import threading
 import time
@@ -21,8 +22,9 @@ import numpy as np
 from . import __version__
 from . import calibration as C
 from . import maps, vmix
+from .imageio import imread, imwrite
 from .cameras import CameraInfo, DemoSource, LiveCamera, demo_world, discover, make_source
-from .config import CameraSetup, MarbleDef, Project, app_dir, load_project, save_project, slug
+from .config import CameraSetup, MarbleDef, Project, app_dir, file_key, load_project, save_project, slug
 from .engine import Runtime
 from .ws_client import LeaderboardStreamer, check_url, test_connection
 
@@ -51,6 +53,8 @@ class App:
         self.home.mkdir(parents=True, exist_ok=True)
         self.demo = demo
         self.lock = threading.RLock()
+        self._toast_lock = threading.Lock()
+        self._opening: set = set()  # cameras being opened for a preview (outside the lock)
         self.discovered: list[CameraInfo] = []
         self.discovering = False
         self.hub: dict[str, LiveCamera] = {}
@@ -72,8 +76,12 @@ class App:
                 self.project = load_project(self.folder)
                 self._load_backgrounds()
             except Exception as e:
-                log.error("could not load project: %s", e)
+                # Never save over a map this version cannot read (a newer version's, or a damaged file):
+                # start a new one in its own folder and say so.
+                log.error("could not load project %s: %s", self.folder, e)
+                self.toast("bad", f"The last map could not be opened ({e}). It was left as it is; a new map was started.")
                 self.project = Project.new()
+                self.folder = None
         else:
             self.project = Project.new()
             self.folder = None
@@ -90,13 +98,39 @@ class App:
     def _settings_path(self) -> Path:
         return self.home / "settings.json"
 
-    def _last_folder(self) -> Path | None:
+    def _settings(self) -> dict:
         try:
             with open(self._settings_path(), encoding="utf-8") as f:
-                p = json.load(f).get("last_project")
-            return Path(p) if p else None
+                d = json.load(f)
+            return d if isinstance(d, dict) else {}
         except Exception:
-            return None
+            return {}
+
+    def _write_settings(self, **changes):
+        """Update settings.json (kept keys merged; written atomically)."""
+        d = {**self._settings(), **changes}
+        self.home.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.home, prefix=".settings-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        os.replace(tmp, self._settings_path())
+
+    @property
+    def language(self) -> str:
+        """The interface language chosen on this PC (kept with the settings: the page's own storage
+        is per port, and the port changes from one start to the next)."""
+        lang = self._settings().get("language", "fa")
+        return lang if lang in ("fa", "en") else "fa"
+
+    def set_language(self, lang: str) -> dict:
+        if lang not in ("fa", "en"):
+            raise UserError("unknown language")
+        self._write_settings(language=lang)
+        return {"language": lang}
+
+    def _last_folder(self) -> Path | None:
+        p = self._settings().get("last_project")
+        return Path(p) if p else None
 
     def _project_folder(self) -> Path:
         if self.folder is None:  # never reuse another map's folder, even if the names match
@@ -108,9 +142,9 @@ class App:
             folder = self._project_folder()
             folder.mkdir(parents=True, exist_ok=True)
             for key, bg in self.backgrounds.items():
-                name = f"background-{slug(key.replace(':', '-'))}.png"
+                name = f"background-{file_key(key)}.png"
                 if key in self._bg_dirty or not (folder / name).exists():
-                    if not cv2.imwrite(str(folder / name), bg):
+                    if not imwrite(folder / name, bg, atomic=True):
                         raise UserError(f"could not write {folder / name}")
                     self._bg_dirty.discard(key)
                 try:
@@ -119,14 +153,13 @@ class App:
                     pass
             self.project.saved_at = maps.now_iso()
             save_project(self.project, folder)
-            with open(self._settings_path(), "w", encoding="utf-8") as f:
-                json.dump({"last_project": str(folder)}, f)
+            self._write_settings(last_project=str(folder))
             return {"saved": str(folder)}
 
     def _load_backgrounds(self):
         for cam in self.project.cameras:
             if cam.background_file:
-                img = cv2.imread(str(self.folder / cam.background_file))
+                img = imread(self.folder / cam.background_file)
                 if img is not None:
                     self.backgrounds[cam.key] = img
 
@@ -164,8 +197,7 @@ class App:
         self.view_check.clear()
         if folder is not None:
             self._load_backgrounds()
-            with open(self._settings_path(), "w", encoding="utf-8") as f:
-                json.dump({"last_project": str(folder)}, f)
+            self._write_settings(last_project=str(folder))
 
     def open_map(self, folder: str) -> dict:
         """Open a saved map. Run ``check_views`` next: the cameras may have moved since it was saved."""
@@ -417,12 +449,12 @@ class App:
             out, seen = [], set()
             for m in marbles:
                 name = str(m.get("name", "")).strip()[:40]
-                mid = str(m.get("id") or slug(name).lower() or f"m{len(out) + 1}")
+                mid = str(m.get("id") or slug(name, default="").lower() or f"m{len(out) + 1}")
                 while mid in seen:
                     mid += "-2"
                 seen.add(mid)
                 color = str(m.get("color", "#888888"))
-                if not (len(color) == 7 and color.startswith("#")):
+                if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
                     color = "#888888"
                 out.append(MarbleDef(mid, name, color))
             if len(out) > 64:
@@ -509,26 +541,49 @@ class App:
             raise UserError("that camera is no longer in the project")
 
     # ------------------------------------------------------------------ live previews (setup)
+    RETRY_OPEN_AFTER = 10.0  # s before a camera that failed to open is tried again
+
     def live_camera(self, key: str) -> LiveCamera:
         with self.lock:
             if self.mode != "setup":
                 raise UserError("previews come from the tracker while live")
             lc = self.hub.get(key)
-            if lc is None or (lc.error and not lc.thread.is_alive()):
-                cam = self._cam(key)
-                src = make_source(cam.backend, cam.device, cam.width, cam.height, cam.fps)
-                lc = LiveCamera(key, src).start()
-                if not lc.error:
-                    try:
-                        lc.source.apply(cam.auto_exposure, cam.exposure, cam.auto_white_balance)
-                        w, h = lc.source.size
-                        if w and h and (cam.width, cam.height) != (w, h):
-                            if cam.markers or key in self.backgrounds:
-                                self.toast("warn", f"{cam.name} now runs at {w}×{h} instead of {cam.width}×{cam.height}: redo its waypoints and background.")
-                            cam.width, cam.height = w, h
-                    except Exception as e:
-                        log.warning("camera settings: %s", e)
-                self.hub[key] = lc
+            failed = lc is not None and lc.error and not lc.thread.is_alive()
+            if lc is not None and (not failed or time.monotonic() - getattr(lc, "failed_at", 0.0) < self.RETRY_OPEN_AFTER):
+                return lc  # running, or failed a moment ago (the page keeps asking: do not hang it every time)
+            if key in self._opening:
+                raise UserError("connecting to the camera…")
+            cam = self._cam(key)
+            spec = (cam.backend, cam.device, cam.width, cam.height, cam.fps)
+            self._opening.add(key)
+        # Opening can take seconds (an NDI source that is switched off): never under the app's lock,
+        # or every other request, autosave included, would wait for it.
+        try:
+            lc = LiveCamera(key, make_source(*spec)).start()
+        finally:
+            with self.lock:
+                self._opening.discard(key)
+        with self.lock:
+            if self.mode != "setup":  # went live meanwhile: the tracker owns the cameras now
+                lc.stop()
+                raise UserError("previews come from the tracker while live")
+            if lc.error:
+                lc.failed_at = time.monotonic()
+            else:
+                try:
+                    cam = self._cam(key)
+                    lc.source.apply(cam.auto_exposure, cam.exposure, cam.auto_white_balance)
+                    w, h = lc.source.size
+                    if w and h and (cam.width, cam.height) != (w, h):
+                        if cam.markers or key in self.backgrounds:
+                            self.toast("warn", f"{cam.name} now runs at {w}×{h} instead of {cam.width}×{cam.height}: redo its waypoints and background.")
+                        cam.width, cam.height = w, h
+                except Exception as e:
+                    log.warning("camera settings: %s", e)
+            old = self.hub.get(key)
+            if old is not None and old is not lc:
+                old.stop()
+            self.hub[key] = lc
             return lc
 
     def _stop_cam(self, key):
@@ -918,6 +973,8 @@ class App:
     def go_live(self) -> dict:
         t_start = time.perf_counter()
         with self.lock:
+            if self.mode == "live":  # a second click, a second window: one live session only
+                return self.state()
             problems = self.step_status()["review"]
             if problems:
                 raise UserError(problems[0])
@@ -966,15 +1023,17 @@ class App:
 
     def stop_live(self) -> dict:
         with self.lock:
-            if self.runtime:
-                self.runtime.stop()
-            if self.streamer:
-                self.streamer.stop()
-            if self.vmix:
-                self.vmix.stop()
-            self.runtime, self.streamer, self.vmix = None, None, None
-            self.mode = "setup"
-            self.step = "review"
+            try:
+                for part in (self.runtime, self.streamer, self.vmix):
+                    if part is not None:
+                        try:
+                            part.stop()
+                        except Exception:  # stop the others anyway, and always get back to setup
+                            log.exception("stopping %s failed", type(part).__name__)
+            finally:
+                self.runtime, self.streamer, self.vmix = None, None, None
+                self.mode = "setup"
+                self.step = "review"
         return self.state()
 
     def new_race(self) -> dict:
@@ -989,8 +1048,10 @@ class App:
         return {"focus": key}
 
     def _on_event(self, kind: str, data: dict):
-        if kind == "board" and data.get("frozen"):
-            return  # the operator holds the board on air as it is
+        # Runs on the fusion thread: it must never take App.lock (state() holds App.lock while it
+        # asks the runtime for its status, which takes the runtime's lock: the two would deadlock).
+        if kind == "board" and data.get("frozen") and not data.get("hidden"):
+            return  # the operator holds the board on air as it is (hiding it still works)
         if kind == "board" and self.vmix is not None:
             if data.get("hidden"):
                 self.vmix.publish_board([], None, "hidden")
@@ -1038,12 +1099,12 @@ class App:
 
     # ------------------------------------------------------------------ misc
     def toast(self, kind: str, text: str):
-        with self.lock:
+        with self._toast_lock:  # its own lock: toasts come from the fusion thread too (see _on_event)
             self.toasts.append({"kind": kind, "text": text, "t": time.time()})
             self.toasts = self.toasts[-10:]
 
     def pop_toasts(self) -> list:
-        with self.lock:
+        with self._toast_lock:
             out, self.toasts = self.toasts, []
             return out
 

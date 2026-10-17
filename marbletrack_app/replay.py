@@ -24,6 +24,7 @@ import cv2
 
 from . import calibration as C
 from .config import Project
+from .imageio import imread, native_path
 from .recording import SessionLog, read_frames_csv, read_jsonl
 
 
@@ -34,7 +35,7 @@ def load_session(folder: Path):
     project = Project.from_dict(manifest["project"])
     backgrounds = {}
     for key, name in manifest["cameras"].items():
-        img = cv2.imread(str(folder / "backgrounds" / f"{name}.png"))
+        img = imread(folder / "backgrounds" / f"{name}.png")
         if img is not None:
             backgrounds[key] = img
     return manifest, project, backgrounds
@@ -49,7 +50,7 @@ def _detect_camera(args):
     folder, key, name, calib_blob, latency, readout = args
     calib = pickle.loads(calib_blob)
     rows = read_frames_csv(Path(folder) / "cameras" / f"{name}.csv")
-    cap = cv2.VideoCapture(str(Path(folder) / "cameras" / f"{name}.avi"))
+    cap = cv2.VideoCapture(native_path(Path(folder) / "cameras" / f"{name}.avi"))
     h, w = calib.track_mask.shape
     det = ColorDetector(calib, work_scale=_work_scale(w, h, _min_radius_px(calib)), readout=readout)
     out = []

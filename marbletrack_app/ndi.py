@@ -24,6 +24,7 @@ import threading
 import time
 from collections import deque
 
+import cv2
 import numpy as np
 
 log = logging.getLogger("marbletrack.ndi")
@@ -50,15 +51,18 @@ class SenderClock:
     stays below a millisecond.
     """
 
-    def __init__(self, window: float = 10.0, step: float = 0.5):
+    def __init__(self, window: float = 10.0, step: float = 0.5, rise: float = 0.05, rise_frames: int = 30):
         self.window, self.step = window, step
+        self.rise, self.rise_frames = rise, rise_frames
         self._q: deque = deque()  # (arrival, offset), offsets increasing (monotonic min-queue)
         self.last_ts: float | None = None
+        self._above = 0  # consecutive frames whose offset is well above the minimum
         self.resets = 0
 
     def reset(self):
         self._q.clear()
         self.last_ts = None
+        self._above = 0
         self.resets += 1
 
     def map(self, sender_ts: float | None, arrival: float) -> float:
@@ -69,6 +73,14 @@ class SenderClock:
         # the learnt minimum. A step forward needs nothing: its smaller offset is the new minimum.
         if self.last_ts is not None and (sender_ts <= self.last_ts - self.step or sender_ts - self.last_ts > 5.0):
             self.reset()
+        # A small step back (less than ``step``) shows as every offset staying above the minimum:
+        # network delay comes and goes, a clock step does not. Relearn after ``rise_frames`` of it.
+        if self._q and off - self._q[0][1] > self.rise:
+            self._above += 1
+            if self._above >= self.rise_frames:
+                self.reset()
+        else:
+            self._above = 0
         self.last_ts = sender_ts
         while self._q and self._q[-1][1] >= off:
             self._q.pop()
@@ -139,6 +151,7 @@ class NDISource:
         self._buf = None
         self._pending = None
         self.sender_timestamps = None  # True / False once the first frame arrived
+        self._wall_to_perf = time.perf_counter() - time.time()  # read together, once
 
     def open(self):
         if not available():
@@ -203,16 +216,17 @@ class NDISource:
             self._buf = np.empty(n, np.uint8)
         if not self.vf.fill_p_data(self._buf):
             return None, arrival
-        img = self._buf[: stride * h].reshape(h, stride // 4, 4)[:, :w, :3]
+        bgrx = self._buf[: stride * h].reshape(h, stride // 4, 4)[:, :w]
         self._size = (w, h)
         if self.sender_timestamps is None:
             self.sender_timestamps = 0 < ts_posix < _TS_UNDEFINED_AFTER
             if not self.sender_timestamps:
                 log.warning("NDI %s sends no timestamps: using arrival times (more timing jitter)", self.name)
-        # sender time (camera clock, UTC) -> local perf_counter, via the wall-clock offset
-        sender_local = ts_posix - time.time() + arrival if self.sender_timestamps else None
+        # sender time (camera clock, UTC) -> local perf_counter, via the wall-to-perf offset taken once:
+        # the PC's wall clock may be stepped (NTP) during a show, perf_counter never is
+        sender_local = ts_posix + self._wall_to_perf if self.sender_timestamps else None
         t = self.clock.map(sender_local, arrival)
-        return np.ascontiguousarray(img), t
+        return cv2.cvtColor(bgrx, cv2.COLOR_BGRA2BGR), t  # ~10x faster than a strided numpy copy
 
     @property
     def size(self):

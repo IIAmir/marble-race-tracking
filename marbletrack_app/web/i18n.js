@@ -7,8 +7,12 @@
 "use strict";
 (() => {
   const KEY = "marbletrack.lang";
-  let lang = "fa";
-  try { lang = localStorage.getItem(KEY) || "fa"; } catch { /* storage blocked: default */ }
+  // The app passes the language chosen on this PC in the address (?lang=); the page's own storage is
+  // only a fallback (it is per port, and the port changes from one start to the next).
+  const params = new URLSearchParams(location.search);
+  let lang = params.get("lang") || "";
+  if (!lang) { try { lang = localStorage.getItem(KEY) || ""; } catch { /* storage blocked */ } }
+  if (lang !== "en") lang = "fa";
   window.MT_LANG = lang;
   function addSwitch() {
     const right = document.querySelector(".bar-right");
@@ -18,7 +22,15 @@
     b.textContent = lang === "fa" ? "English" : "فارسی";
     b.title = lang === "fa" ? "Switch the interface to English" : "رابط کاربری فارسی";
     b.setAttribute("data-noi18n", "");
-    b.onclick = () => { try { localStorage.setItem(KEY, lang === "fa" ? "en" : "fa"); } catch { /* ignore */ } location.reload(); };
+    b.onclick = async () => {
+      const next = lang === "fa" ? "en" : "fa";
+      try { localStorage.setItem(KEY, next); } catch { /* ignore */ }
+      try {  // remembered by the app for its next start
+        await fetch("/api/set_language", { method: "POST", headers: { "X-Token": params.get("k") || "", "Content-Type": "application/json" }, body: JSON.stringify({ lang: next }) });
+      } catch { /* the page still switches */ }
+      params.set("lang", next);
+      location.replace(`${location.pathname}?${params}`);
+    };
     right.prepend(b);
   }
   if (lang !== "fa") { document.addEventListener("DOMContentLoaded", addSwitch); return; }
@@ -210,7 +222,7 @@
     "Nothing is listening at that address (connection refused). Is the server running?": "در آن نشانی چیزی در حال گوش دادن نیست (اتصال رد شد). آیا سرور روشن است؟",
     "No answer within 5 s. Check the address, the network and the firewall.": "در ۵ ثانیه پاسخی نیامد. نشانی، شبکه و فایروال را بررسی کنید.",
     "The server name could not be found (DNS). Check the address.": "نام سرور پیدا نشد (DNS). نشانی را بررسی کنید.",
-    "Ctrl+Z": "Ctrl+Z", "Guide": "راهنما", "Open the user guide (PDF)": "باز کردن راهنمای کاربر (PDF)",
+    "Ctrl+Z": "Ctrl+Z", "connecting to the camera…": "در حال اتصال به دوربین…", "a new race has started since: look at the board again": "از آن موقع مسابقهٔ جدیدی شروع شده: دوباره به جدول نگاه کنید", "Guide": "راهنما", "Open the user guide (PDF)": "باز کردن راهنمای کاربر (PDF)",
     "the guide is not included in this build": "راهنما در این نسخه از برنامه نیست",
   };
   /* ------------------------------------------------------------ patterns (applied in order to strings not found above) */
@@ -279,7 +291,8 @@
     [/ Retrying in (\d+) s\.$/, " تلاش دوباره تا $1 ثانیهٔ دیگر."],
     // live
     [/^Racing · joined late$/, "در حال مسابقه · دیر پیوست"], [/ · joined late$/, " · دیر پیوست"], [/ · off air$/, " · خارج از آنتن"], [/ · frozen$/, " · ثابت‌شده"],
-    [/^(Final|Provisional)/, (m) => (m === "Final" ? "نهایی" : "موقت")],
+    [/^(Final|Provisional)(?= ·|$)/, (m) => (m === "Final" ? "نهایی" : "موقت")],
+    [/^Racing(?= ·)/, "در حال مسابقه"], [/^Waiting for marbles(?= ·)/, "در انتظار توپ‌ها"], [/^Finished(?= ·)/, "تمام شد"],
     [/^Lap (\d+)\/(\d+) · /, "دور $1/$2 · "], [/ · hidden$/, " · پنهان"], [/ · lost$/, " · گم‌شده"], [/ · new$/, " · تازه"], [/ · photo finish: review$/, " · فوتوفینیش: بازبینی شود"],
     [/^Saving crops of the empty track…$/, "در حال ذخیرهٔ تصویرهای مسیر خالی…"], [/^Saving crops of (.+)…$/, "در حال ذخیرهٔ تصویرهای $1…"],
     [/^(\d+) crops saved in the map's training folder$/, "$1 تصویر در پوشهٔ training نقشه ذخیره شد"],
@@ -290,7 +303,7 @@
     [/^Operator: froze the board$/, "اپراتور: جدول را ثابت کرد"], [/^Operator: unfroze the board$/, "اپراتور: جدول را آزاد کرد"],
     [/^Operator: took the board off air$/, "اپراتور: جدول را از آنتن برداشت"], [/^Operator: put the board back on air$/, "اپراتور: جدول را به آنتن برگرداند"],
     [/^(.+): finish not seen at the line, time estimated: check$/, "$1: عبور از خط دیده نشد، زمان تخمینی است؛ بررسی کنید"],
-    [/^Finish rack: (.+)$/, "قفسهٔ پایان: $1"], [/^Tracking started on (\d+) cameras?$/, "ردیابی روی $1 دوربین شروع شد"], [/^(.+) started$/, "$1 شروع به کار کرد"],
+    [/^Finish rack: (.+)$/, "قفسهٔ پایان: $1"], [/^Tracker error: (.+)$/, "خطای ردیاب: $1"], [/^Tracking started on (\d+) cameras?$/, "ردیابی روی $1 دوربین شروع شد"], [/^(.+) started$/, "$1 شروع به کار کرد"],
     // counts inside summaries ("10 marbles · 29.7 m · 3 laps", map list lines)
     [/(\d+) marbles?\b/g, "$1 توپ"], [/ · (\d+) laps\b/g, " · $1 دور"], [/(\d+) cameras? \((\d+) set up\)/g, "$1 دوربین ($2 آماده)"],
     [/\blength not set\b/g, "طول تعیین نشده"], [/\bAddress not set\b/g, "نشانی تعیین نشده"], [/ · ([\d.]+) m$/, " · $1 متر"],

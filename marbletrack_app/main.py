@@ -49,6 +49,10 @@ def main(argv=None) -> int:
     from .config import app_dir
 
     home = app_dir()
+    if args.demo and not args.home:
+        # the demo cameras never touch the real maps: the demo keeps its own maps and settings
+        home = home / "demo"
+        os.environ["MARBLETRACK_HOME"] = str(home)
     home.mkdir(parents=True, exist_ok=True)
     logfile = _setup_logging(home, args.debug)
     log = logging.getLogger("marbletrack")
@@ -61,27 +65,78 @@ def main(argv=None) -> int:
 
         return run_selftest(args.selftest_out)
 
+    running = _running_instance(home)
+    if running and not args.no_open:
+        # one MarbleTrack per data folder: two would fight over the cameras and save over each other's map
+        log.info("already running at %s: showing it", running.split("?")[0])
+        if args.browser or not _open_window(running, home, log):
+            webbrowser.open(running)
+        return 0
+
     from .app import App
     from .server import Server
 
     app = App(home=home, demo=args.demo)
     server = Server(app, args.port).start()
+    url = f"{server.url}&lang={app.language}"
+    _write_instance(home, url)
     log.info("UI at %s", server.url.split("?")[0])
     try:
         if args.no_open:
-            _say(server.url)
+            _say(url)
             threading.Event().wait()
-        elif args.browser or not _open_window(server.url, home, log):
-            webbrowser.open(server.url)
-            _say(f"MarbleTrack is running at {server.url}\nClose this window or press Ctrl+C to stop.")
+        elif args.browser or not _open_window(url, home, log):
+            webbrowser.open(url)
+            _say(f"MarbleTrack is running at {url}\nClose this window or press Ctrl+C to stop.")
             while True:
                 time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
+        _clear_instance(home, url)
         app.shutdown()
         server.stop()
     return 0
+
+
+def _instance_file(home: Path) -> Path:
+    return home / "instance.json"
+
+
+def _running_instance(home: Path) -> str | None:
+    """The address of a MarbleTrack already serving this data folder, if one answers."""
+    import json
+    import urllib.request
+    from urllib.parse import urlparse
+
+    try:
+        url = json.loads(_instance_file(home).read_text(encoding="utf-8"))["url"]
+        u = urlparse(url)
+        token = dict(p.split("=", 1) for p in u.query.split("&") if "=" in p).get("k", "")
+        req = urllib.request.Request(f"{u.scheme}://{u.netloc}/api/state", headers={"X-Token": token})
+        with urllib.request.urlopen(req, timeout=1.5) as r:  # noqa: S310 - our own loopback server
+            return url if r.status == 200 else None
+    except Exception:
+        return None
+
+
+def _write_instance(home: Path, url: str):
+    import json
+
+    try:
+        _instance_file(home).write_text(json.dumps({"url": url, "pid": os.getpid()}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clear_instance(home: Path, url: str):
+    import json
+
+    try:
+        if json.loads(_instance_file(home).read_text(encoding="utf-8")).get("url") == url:
+            _instance_file(home).unlink()
+    except Exception:
+        pass
 
 
 def _say(text: str):

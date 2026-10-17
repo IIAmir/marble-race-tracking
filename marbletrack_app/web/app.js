@@ -57,26 +57,33 @@ async function loadState() {
 const img = (path, q = "") => `/api/${path}?k=${encodeURIComponent(TOKEN)}${q}`;
 
 let saveTimer = null;
+let changeNo = 0;  // counts changes, so a save that started before the last change does not count as saving it
 function setState(st, mutated) {
   S.st = st;
   if (mutated && st.mode === "setup") {
     S.dirty = true;
+    changeNo++;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(autosave, 1200);
   }
   render();
 }
 async function autosave() {
-  if (!S.dirty || S.saving) return;
+  if (!S.dirty) return;
+  if (S.saving) { clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 600); return; }  // after this one
   S.saving = true; $("#saved").textContent = "Saving…";
+  const savedNo = changeNo;
   try {
     const r = await fetch("/api/save", { method: "POST", headers: { "X-Token": TOKEN } });
     if (!r.ok) throw new Error((await r.json()).error);
-    S.dirty = false; $("#saved").textContent = "All changes saved";
+    if (changeNo === savedNo) { S.dirty = false; $("#saved").textContent = "All changes saved"; }
     if (!S.st.folder) await loadState();
   }
   catch { $("#saved").textContent = "Not saved"; }
-  S.saving = false;
+  finally {
+    S.saving = false;
+    if (S.dirty) { clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 600); }
+  }
 }
 
 /* ------------------------------------------------------------------ toasts (enter from the edge they live on; leave faster) */
@@ -311,7 +318,7 @@ VIEWS.cameras = {
   async find(btn) {
     await busy(btn, "Looking for cameras…", () => api("discover_cameras", {}, { mutates: true }));
     const n = S.st.cameras.filter((c) => c.connected).length;
-    $("#findnote").textContent = n ? `${plural(n, "camera")} connected.` : "";
+    const note = $("#findnote"); if (note) note.textContent = n ? `${plural(n, "camera")} connected.` : "";  // the step may have changed meanwhile
     this.draw(true);
   },
   draw(stagger) {
@@ -389,7 +396,7 @@ function camTabs(sel, kind) {
     const done = kind === "wp" ? c.markers.length >= 2 : S.st.project.marbles.every((m) => c.palette[m.id]);
     const warn = kind === "col" && c.palette_issues.length;
     return `<button class="tab-btn ${c.key === sel ? "on" : ""}" role="tab" aria-selected="${c.key === sel}" data-cam="${esc(c.key)}" title="${esc(c.name)}">
-      <span class="st ${warn ? "warn" : done ? "ok" : ""}"></span><span class="l">${esc(c.name)}</span></button>`;
+      <span class="st ${warn ? "warn" : done ? "ok" : ""}"></span><span class="l" data-noi18n>${esc(c.name)}</span></button>`;
   }).join("")}</div>`;
 }
 
@@ -478,7 +485,11 @@ VIEWS.waypoints = {
     el.innerHTML = head("Track waypoints", "In each camera, click the distance marks along the track in race direction. They tell the tracker how far along the track every pixel is, perspective included.") +
       `<div id="tabs"></div><div class="work"><div id="view"></div><div class="side" id="side"></div></div>
        <div class="card"><h3>Coverage of the whole track</h3><div id="cover"></div><small class="hint">Each bar is one camera. Hatched red stretches are seen by no camera: the tracker treats them like a tunnel.</small></div>`;
-    this.keyh = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); api("undo_marker", { key: S.sel.wp }); } };
+    this.keyh = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+      if (e.target.closest?.("input,textarea,select,[contenteditable]")) return;  // the field's own undo
+      e.preventDefault(); api("undo_marker", { key: S.sel.wp });
+    };
     addEventListener("keydown", this.keyh);
     this.open();
   },
@@ -524,27 +535,32 @@ VIEWS.waypoints = {
     const v = this.viewer;
     v.svg.addEventListener("pointerdown", (e) => {
       const mk = e.target.closest(".mk"); if (!mk) return;
-      e.preventDefault(); mk.setPointerCapture(e.pointerId);
+      e.preventDefault();
       const i = +mk.dataset.i, cam = this.cam(); let moved = false;
       v.dragged = false;
+      // Listen on the window, not on the circle: every move redraws the overlay, which replaces the
+      // circle (and would drop its pointer capture and its listeners mid-drag).
       const move = (ev) => {
         const p = v.toImage(ev); if (!p) return;
         moved = true; v.dragged = true;
         cam.markers[i] = [p.x, p.y]; v.draw();
       };
       const up = () => {
-        mk.removeEventListener("pointermove", move);
-        if (moved) api("move_marker", { key: cam.key, index: i, x: cam.markers[i][0], y: cam.markers[i][1] });
+        removeEventListener("pointermove", move);
+        removeEventListener("pointerup", up);
+        removeEventListener("pointercancel", up);
+        if (moved) api("move_marker", { key: cam.key, index: i, x: cam.markers[i][0], y: cam.markers[i][1] }).catch(() => {});
         setTimeout(() => (v.dragged = false), 0);
       };
-      mk.addEventListener("pointermove", move);
-      mk.addEventListener("pointerup", up, { once: true });
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up);
+      addEventListener("pointercancel", up);
     });
     v.svg.addEventListener("click", (e) => {
       const lb = e.target.closest(".lbl"); if (!lb) return;
       e.stopPropagation();
       const i = +lb.dataset.i, cam = this.cam();
-      openPop(lb.getBoundingClientRect(), `<label class="field"><span>Waypoint ${i + 1} is at</span><div class="unit" data-unit="m"><input class="input num" type="number" step="0.01" value="${cam.marker_s[i]}"></div></label>
+      openPop(lb.getBoundingClientRect(), `<label class="field"><span>Waypoint ${i + 1} is at</span><div class="unit" data-unit="m"><input class="input num" type="number" step="0.01" value="${+cam.marker_s[i]}"></div></label>
         <small class="hint">${i === 0 ? "Moving the first waypoint shifts all of them." : "Only this waypoint changes."}</small>
         <div class="row end"><button class="btn sm ghost" data-c>Cancel</button><button class="btn sm primary" data-ok>Save</button></div>`, (pop) => {
         const inp = $("input", pop); inp.select();
@@ -559,7 +575,7 @@ VIEWS.waypoints = {
     const pendingBreak = (cam.breaks || []).some((b) => b >= n);
     $("#side").innerHTML = `
       <div class="card stack">
-        <h3>${esc(cam.name)}</h3>
+        <h3 data-noi18n>${esc(cam.name)}</h3>
         ${cam.role === "rack" ? note("info", `This camera watches the <b>finish rack</b>. Click the centre of every slot, the first finisher's slot first. No distances needed. In step 5, click each marble sitting in the rack to learn its colours here.`)
           : n === 0 ? note("info", `Click the centre of the track at the <b>first mark</b> this camera sees, then the next ones in race direction. Tip: rest a marble on each mark and click its centre.`) : ""}
         ${n === 1 ? note("info", "Now the next mark in race direction.") : ""}
@@ -619,11 +635,12 @@ VIEWS.background = {
   },
   draw() {
     const R = this.results || {};
+    if (!$("#bgs")) return;  // left the step while capturing
     $("#bgs").innerHTML = active().map((c) => {
       const r = R[c.key];
       const state = r && !r.ok ? `<span class="chip bad" title="${esc(r.error)}">Failed</span>` : r && !r.static ? `<span class="chip warn" title="${r.moving}% of the track changed while capturing">Something moved</span>` : c.has_background ? `<span class="chip ok">${I.check}Captured</span>` : `<span class="chip">Not yet</span>`;
       return `<figure>${c.has_background ? `<img alt="Empty track seen by ${esc(c.name)}" src="${img(`background/${encodeURIComponent(c.key)}`, `&v=${this.v}`)}">` : `<div class="thumb"><span class="empty">No capture yet</span></div>`}
-        <figcaption><span class="ellipsis" title="${esc(c.name)}">${esc(c.name)}</span><span class="row" style="gap:4px;flex-wrap:nowrap">${state}<button class="btn sm ghost" data-re="${esc(c.key)}" title="Capture ${esc(c.name)} again">Again</button></span></figcaption></figure>`;
+        <figcaption><span class="ellipsis" data-noi18n title="${esc(c.name)}">${esc(c.name)}</span><span class="row" style="gap:4px;flex-wrap:nowrap">${state}<button class="btn sm ghost" data-re="${esc(c.key)}" title="Capture ${esc(c.name)} again">Again</button></span></figcaption></figure>`;
     }).join("");
     $$("#bgs [data-re]").forEach((b) => (b.onclick = () => this.capture(b, [b.dataset.re])));
   },
@@ -653,7 +670,7 @@ VIEWS.colours = {
     this.side();
   },
   overlay(k) {
-    return this.rings.map((r) => `<circle class="ring ${r.go ? "go" : ""}" cx="${r.x}" cy="${r.y}" r="${r.r}" fill="none" stroke="${r.color}" stroke-width="${3 * k}"/>`).join("");
+    return this.rings.map((r) => `<circle class="ring ${r.go ? "go" : ""}" cx="${+r.x}" cy="${+r.y}" r="${+r.r}" fill="none" stroke="${esc(r.color)}" stroke-width="${3 * k}"/>`).join("");
   },
   async sample(p) {
     const cam = this.cam(), mid = S.sel.marble;
@@ -688,7 +705,7 @@ VIEWS.colours = {
         <div class="picker" role="listbox" aria-label="Marbles">${ms.map((m) => {
           const s = cam.palette[m.id];
           const st = !s ? `<span class="chip">To do</span>` : s.copied_from ? `<span class="chip warn" title="Copied from another camera">Copied</span>` : `<span class="chip ok">${I.check}${s.clicks > 1 ? s.clicks + "×" : ""}</span>`;
-          return `<button class="pick ${m.id === S.sel.marble ? "on" : ""}" role="option" aria-selected="${m.id === S.sel.marble}" data-m="${esc(m.id)}"><span class="swatch" style="background:${esc(m.color)}"></span><span class="ellipsis" title="${esc(m.name)}">${esc(m.name)}</span>${st}</button>`;
+          return `<button class="pick ${m.id === S.sel.marble ? "on" : ""}" role="option" aria-selected="${m.id === S.sel.marble}" data-m="${esc(m.id)}"><span class="swatch" style="background:${esc(m.color)}"></span><span class="ellipsis" data-noi18n title="${esc(m.name)}">${esc(m.name)}</span>${st}</button>`;
         }).join("")}</div>
         ${S.sel.marble && cam.palette[S.sel.marble] ? `<button class="btn sm ghost danger" id="forget">Forget ${esc(name(S.sel.marble))} on this camera</button>` : ""}
       </div>
@@ -824,8 +841,8 @@ function renderLive() {
     focusKey = focusKey && cams.some((c) => c.key === focusKey) ? focusKey : cams[0]?.key;
     live.innerHTML = `
       <div class="wall"><div class="tiles" id="tiles">${cams.map((c) => `<button class="tile ${c.key === focusKey ? "on" : ""}" data-k="${esc(c.key)}" title="${esc(c.name)}">
-          <img alt="" data-snap="${esc(c.key)}"><span class="t"><span class="led"></span><span class="ellipsis">${esc(c.name)}</span></span></button>`).join("")}</div>
-        <div class="focus" id="focus"><img alt="Focused camera"><span class="cap"></span></div></div>
+          <img alt="" data-snap="${esc(c.key)}"><span class="t"><span class="led"></span><span class="ellipsis" data-noi18n>${esc(c.name)}</span></span></button>`).join("")}</div>
+        <div class="focus" id="focus"><img alt="Focused camera"><span class="cap" data-noi18n></span></div></div>
       <aside class="board"><div class="board-head"><div class="race-state"><span id="rstate" class="chip">Waiting</span>
           <div class="row"><button class="btn sm" id="newrace" title="Clear the board and wait for the next race">New race</button><button class="btn sm ghost" id="stop">Back to setup</button></div></div>
           <div class="clock" id="clock">0.000</div>
@@ -848,27 +865,31 @@ function renderLive() {
     $("#tiles").onclick = (e) => { const t = e.target.closest(".tile"); if (t) setFocus(t.dataset.k); };
     $("#newrace").onclick = (e) => busy(e.currentTarget, "…", () => api("new_race", {}, { mutates: false }));
     const op = (action, args = {}) => api("live_operator", { action, ...args }, { mutates: false });
-    $("#confirmres").onclick = () => op("confirm", { confirmed: !S.live?.race?.confirmed });
+    $("#confirmres").onclick = () => op("confirm", { confirmed: !S.live?.race?.confirmed, race_id: S.live?.race?.id });
     $("#harvest").onclick = () => api("live_harvest", { label: S.live?.harvesting ? null : $("#hlabel").value }, { mutates: false });
     $("#freeze").onclick = () => op("freeze", { on: !S.live?.frozen });
     $("#hideb").onclick = () => op("hide", { on: !S.live?.hidden });
-    $("#rows").onclick = (e) => {
+    // pointerdown, not click: the rows are redrawn several times a second, so the row under the
+    // pointer at press time may be a new element by the time the button comes up
+    $("#rows").onpointerdown = (e) => {
+      if (e.button !== 0) return;
       const row = e.target.closest(".lrow"); if (!row) return;
-      const board = S.live?.board || [], id = row.dataset.id, me = board.find((x) => x.marble_id === id);
+      const board = S.live?.board || [], id = row.dataset.id, me = board.find((x) => x.marble_id === id), raceId = S.live?.race?.id;
       if (!me) return;
       const others = board.filter((x) => x.marble_id !== id);
       const idx = board.findIndex((x) => x.marble_id === id);
-      const fin = me.finish_time != null;
-      openPop(row.getBoundingClientRect(), `<div class="stack"><b>${esc(me.name)}</b>
-        <label class="field"><span>The tracker has it mixed up with</span><select class="input" id="swapw">${others.map((o) => `<option value="${esc(o.marble_id)}">${esc(o.name)}</option>`).join("")}</select></label>
+      const complete = S.live?.race?.state === "complete";  // the order is changed by hand only once the race is over
+      openPop(row.getBoundingClientRect(), `<div class="stack"><b data-noi18n>${esc(me.name)}</b>
+        <label class="field"><span>The tracker has it mixed up with</span><select class="input" id="swapw" data-noi18n>${others.map((o) => `<option value="${esc(o.marble_id)}">${esc(o.name)}</option>`).join("")}</select></label>
         <button class="btn sm" data-swap>Swap the two</button>
-        ${fin || S.live?.race?.state === "complete" ? `<div class="row"><button class="btn sm ghost" data-mv="-1" ${idx === 0 ? "disabled" : ""}>Move up</button><button class="btn sm ghost" data-mv="1" ${idx === board.length - 1 ? "disabled" : ""}>Move down</button></div>` : ""}
+        ${complete ? `<div class="row"><button class="btn sm ghost" data-mv="-1" ${idx === 0 ? "disabled" : ""}>Move up</button><button class="btn sm ghost" data-mv="1" ${idx === board.length - 1 ? "disabled" : ""}>Move down</button></div>` : ""}
         </div>`, (pop) => {
-        $("[data-swap]", pop).onclick = () => op("swap", { a: id, b: $("#swapw", pop).value }).then(closePop);
+        $("[data-swap]", pop).onclick = () => op("swap", { a: id, b: $("#swapw", pop).value, race_id: raceId }).then(closePop);
         $$("[data-mv]", pop).forEach((b) => (b.onclick = () => {
-          const order = board.map((x) => x.marble_id), j = idx + +b.dataset.mv;
-          [order[idx], order[j]] = [order[j], order[idx]];
-          op("set_order", { order }).then(closePop);
+          const order = (S.live?.board || board).map((x) => x.marble_id), k = order.indexOf(id), j = k + +b.dataset.mv;  // the board as it is now
+          if (k < 0 || j < 0 || j >= order.length) return;
+          [order[k], order[j]] = [order[j], order[k]];
+          op("set_order", { order, race_id: raceId }).then(closePop);
         }));
       });
     };
@@ -935,7 +956,7 @@ function paintLive(d) {
     const lapTxt = laps > 1 && !fin && e.status !== "unseen" ? `Lap ${e.lap || 1}/${laps} · ` : "";
     const sub = lapTxt + (e.photo_finish ? "photo finish: review" : fin ? `#${e.rank}` : e.status === "coasting" ? "hidden" : e.status === "lost" ? "lost" : e.status === "acquiring" ? "new" : `${e.speed_mps.toFixed(2)} m/s`);
     return `<div class="lrow ${fin ? "fin" : ""} ${hid ? "hid" : ""} ${e.photo_finish ? "photo" : ""}" data-id="${esc(e.marble_id)}">
-      <span class="rk">${e.rank}</span><span class="swatch" style="background:${esc(e.color)}"></span><span class="nm" title="${esc(e.name)}">${esc(e.name)}</span>
+      <span class="rk">${e.rank}</span><span class="swatch" style="background:${esc(e.color)}"></span><span class="nm" data-noi18n title="${esc(e.name)}">${esc(e.name)}</span>
       <span class="val">${esc(val)}<small>${esc(sub)}</small></span></div>`;
   }).join("");
   if (!reduceMotion) $$(".lrow", rows).forEach((el) => {
@@ -962,12 +983,13 @@ function paintLive(d) {
   $("#vmxdet").textContent = vm.state === "connected" ? (vm.errors ? `${vm.errors} rejected · ${vm.last_error}` : `${(vm.sent || 0).toLocaleString("en-US")} field updates`) : vm.detail || "";
   $("#vmxdet").title = vm.last_error || vm.detail || "";
   // race control log
+  const name = (id) => S.st.project.marbles.find((m) => m.id === id)?.name || id;
   const KIND = { finish: (e) => [`${e.name} finishes P${e.rank} · ${fmtS(e.time)}`, "acc"], race_started: () => ["Race started", "ok"], race_complete: () => ["Race complete", "ok"],
     new_race: (e) => [`New race (${e.reason})`, ""], camera_offline: (e) => [`${e.name} stopped sending frames`, "bad"], camera_online: (e) => [`${e.name} back online`, "ok"],
-    operator: (e) => [`Operator: ${{ swap: `swapped ${e.a} and ${e.b}`, set_order: `set the order ${(e.order || []).join(", ")}`, confirm: e.confirmed ? "confirmed the result" : "reopened the result", freeze: e.on ? "froze the board" : "unfroze the board", hide: e.on ? "took the board off air" : "put the board back on air" }[e.action] || e.action}`, "warn"],
+    operator: (e) => [`Operator: ${{ swap: `swapped ${name(e.a)} and ${name(e.b)}`, set_order: `set the order ${(e.order || []).map(name).join(", ")}`, confirm: e.confirmed ? "confirmed the result" : "reopened the result", freeze: e.on ? "froze the board" : "unfroze the board", hide: e.on ? "took the board off air" : "put the board back on air" }[e.action] || e.action}`, "warn"],
     finish_estimated: (e) => [`${e.name}: finish not seen at the line, time estimated: check`, "bad"],
     rack_check: (e) => [e.match ? `Finish rack agrees with the board${e.confirmed ? ": result confirmed" : ""}` : `Finish rack: ${e.detail}`, e.match ? "ok" : e.status === "filling" ? "" : "bad"],
-    camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
+    camera_error: (e) => [`${e.name}: ${e.error}`, "bad"], engine_error: (e) => [`Tracker error: ${e.error}`, "bad"], camera_started: (e) => [`${e.name} started`, ""], tracking_started: (e) => [`Tracking started on ${plural(e.cameras, "camera")}`, "ok"] };
   $("#log").innerHTML = (d.log || []).slice(0, 30).map((e) => {
     const f = KIND[e.kind]; if (!f) return "";
     const [t, c] = f(e); const time = new Date(e.t * 1000).toLocaleTimeString(DATE_LOCALE);
@@ -1060,8 +1082,8 @@ async function openMaps() {
       </div>
       <div class="stack"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Saved maps (${maps.length})</h3><button class="btn sm" id="mimport">Import .zip</button></div>
         <div class="maplist">${maps.map((m) => `<div class="maprow ${m.folder === current ? "cur" : ""}">
-          <div style="min-width:0"><b class="ellipsis" style="display:block">${esc(m.name)}${m.folder === current ? ' <span class="chip acc">open</span>' : ""}</b>
-            <div class="meta" title="${esc(m.notes)}">${esc(fmtDate(m.saved_at))} · ${plural(m.cameras, "camera")} (${m.cameras_set_up} set up) · ${m.track_length ? fmtM(m.track_length, 1) : "length not set"}${m.notes ? " · " + esc(m.notes) : ""}</div></div>
+          <div style="min-width:0"><b class="ellipsis" style="display:block"><span data-noi18n>${esc(m.name)}</span>${m.folder === current ? ' <span class="chip acc">open</span>' : ""}</b>
+            <div class="meta" title="${esc(m.notes)}">${esc(fmtDate(m.saved_at))} · ${plural(m.cameras, "camera")} (${m.cameras_set_up} set up) · ${m.track_length ? fmtM(m.track_length, 1) : "length not set"}${m.notes ? ` · <span data-noi18n>${esc(m.notes)}</span>` : ""}</div></div>
           <div class="acts">${m.folder === current ? "" : `<button class="btn sm" data-open="${esc(m.folder)}">Open</button>`}
             <button class="btn sm ghost" data-copy="${esc(m.folder)}" data-name="${esc(m.name)}">Copy as new route</button>
             <button class="btn sm ghost" data-export="${esc(m.folder)}">Export</button></div></div>`).join("") || '<p class="hint">No saved maps yet.</p>'}</div></div>`;

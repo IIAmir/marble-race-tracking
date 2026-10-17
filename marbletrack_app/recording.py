@@ -29,10 +29,12 @@ from pathlib import Path
 import cv2
 
 from . import __version__
+from .config import file_key
+from .imageio import imwrite, native_path
 
 
 def _safe(key: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", key).strip("-") or "camera"
+    return file_key(key)
 
 
 def session_root(project, map_folder: Path | None) -> Path:
@@ -51,7 +53,7 @@ def start_session(root: Path, project, backgrounds: dict) -> Path:
     (path / "backgrounds").mkdir(parents=True)
     (path / "cameras").mkdir()
     for key, img in backgrounds.items():
-        cv2.imwrite(str(path / "backgrounds" / f"{_safe(key)}.png"), img)
+        imwrite(path / "backgrounds" / f"{_safe(key)}.png", img)
     manifest = {"app_version": __version__, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "project": project.to_dict(),
                 "cameras": {c.key: _safe(c.key) for c in project.active_cameras}}
@@ -91,7 +93,7 @@ class FrameRecorder:
             frame, tc, ta = item
             if self._writer is None:
                 h, w = frame.shape[:2]
-                self._writer = cv2.VideoWriter(self.video_path, cv2.VideoWriter_fourcc(*"MJPG"), self.fps, (w, h))
+                self._writer = cv2.VideoWriter(native_path(self.video_path), cv2.VideoWriter_fourcc(*"MJPG"), self.fps, (w, h))
                 self._writer.set(cv2.VIDEOWRITER_PROP_QUALITY, self.quality)
             self._writer.write(frame)
             self._rows.writerow([self.written, f"{tc:.6f}", f"{ta:.6f}"])

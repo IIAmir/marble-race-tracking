@@ -113,6 +113,7 @@ class FusionEngine:
     _nll = True  # association cost includes the log of the innovation variance
     _bound = True  # position variance bounded inside places no camera sees
     _cascade = True  # marbles seen recently are matched before hidden or lost ones
+    RUN_OUT = 2.0  # m of track past the finish line a finished marble may still be followed on
 
     def __init__(
         self,
@@ -178,6 +179,7 @@ class FusionEngine:
         self._online: dict[str, bool] = {c: True for c in self.cameras}
         self.events: list[RaceEvent] = []
         self.now = 0.0
+        self._first_now: float | None = None  # the engine's first clock reading (start-up grace for cameras)
         self.max_back = max_back
         self._unknown_cost = float(np.log(1.0 / self.r_floor))  # as a marble known to within ~1 m
         self.blind_zones = self._compute_blind_zones()
@@ -201,9 +203,12 @@ class FusionEngine:
         return _merge(zones)
 
     def _lap_candidates(self, det: Detection) -> Detection:
-        """On a circuit, every position within the lap may be on any lap of the race."""
+        """On a circuit, every position within the lap may be on any lap of the race, and just past
+        the end of the last one (a finish line at or near the lap line is crossed into the next lap)."""
         L = self.lap_length
-        cands = [replace(c, s=float(np.mod(c.s, L)) + k * L) for c in det.candidates for k in range(self.laps)]
+        reach = self.s_finish + self.RUN_OUT
+        cands = [replace(c, s=float(np.mod(c.s, L)) + k * L) for c in det.candidates for k in range(self.laps + 1)
+                 if k < self.laps or float(np.mod(c.s, L)) + k * L <= reach]
         return replace(det, candidates=cands)
 
     def _cold_start_candidate(self, det: Detection):
@@ -222,8 +227,8 @@ class FusionEngine:
         for cam in self.cameras:
             last = self._last_frame.get(cam)
             online = last is not None and self.now - last <= self.camera_timeout
-            if last is None and self.now <= self.camera_timeout:
-                online = True  # start-up grace
+            if last is None and self.now - (self._first_now if self._first_now is not None else self.now) <= self.camera_timeout:
+                online = True  # start-up grace: a new race's engine has not had a frame from every camera yet
             if online != self._online.get(cam, True):
                 self._online[cam] = online
                 self.events.append(RaceEvent(self.now, "camera_online" if online else "camera_offline", cam))
@@ -448,6 +453,8 @@ class FusionEngine:
         if self.lap_length:
             detections = [self._lap_candidates(d) for d in detections]
         self.now = max(self.now, t)
+        if self._first_now is None:
+            self._first_now = t
         if cam_id is not None:
             self._last_frame[cam_id] = max(t, self._last_frame.get(cam_id, t))
         self._check_health()
@@ -538,6 +545,8 @@ class FusionEngine:
     def tick(self, now: float) -> None:
         """Advance the clock without measurements (detects silent cameras)."""
         self.now = max(self.now, now)
+        if self._first_now is None:
+            self._first_now = now
         self._check_health()
         self._settle_finishes()
 
@@ -619,11 +628,12 @@ class FusionEngine:
         def at_now(m) -> float:
             # Each filter state is at its last update's time (a camera frame, or one image
             # row of it under a rolling shutter); compare everyone at the same instant.
-            return float(m.x[0] + m.x[1] * np.clip(now - m.t, -0.05, 0.05))
+            return float(m.x[0] + m.x[1] * min(0.05, max(-0.05, now - m.t)))
+
+        keys = {i: (at_now(self.marbles[i]) if self.marbles[i].initialized else -np.inf) for i in racing}
 
         def key(i: int) -> float:
-            m = self.marbles[i]
-            return at_now(m) if m.initialized else -np.inf
+            return keys[i]
 
         status = {i: self.status(self.marbles[i], now) for i in racing}
         observed = {i: status[i] == "tracking" for i in racing}

@@ -34,7 +34,7 @@ ACTIONS = {
     "set_marker_distance", "move_marker", "autofill_markers", "capture_background", "sample_colour",
     "clear_colour", "copy_colours", "autofill_colours", "update_server", "test_server", "update_vmix", "test_vmix", "update_record", "live_operator", "live_harvest", "demo_setup_all", "list_maps", "open_map", "new_map", "export_map", "import_map",
     "check_views", "realign_cameras", "new_stretch", "go_live", "stop_live",
-    "new_race", "focus_camera", "open_guide",
+    "new_race", "focus_camera", "open_guide", "set_language",
 }
 
 
@@ -73,6 +73,10 @@ class Server:
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
+                # the page runs only its own scripts: markup that ends up in it (a map someone sent) cannot add any
+                self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                                 "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; "
+                                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
                 for k, v in (extra or {}).items():
                     self.send_header(k, v)
                 self.end_headers()

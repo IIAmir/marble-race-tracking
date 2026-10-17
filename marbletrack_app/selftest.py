@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import tempfile
 import threading
 import time
@@ -38,8 +39,17 @@ def run_selftest(out: Path | None = None, live_seconds: float = 25.0, cameras: i
         from .server import Server
 
         check("imports", True, f"MarbleTrack {__version__}, OpenCV {cv2.__version__}, websockets {websockets.__version__}")
+        if getattr(sys, "frozen", False):
+            # a release must carry what the venue needs, even when the build machine silently lacked it
+            from . import ndi
+            from .server import web_root
+
+            check("NDI runtime", ndi.available() and _ndi_finder_ok(), "cyndilib and the NDI library load")
+            check("app window", _webview_ok(), "pywebview with Edge WebView2 support")
+            check("user guide", (web_root() / "guide" / "MarbleTrack-Guide-FA.pdf").is_file(), "bundled")
         port = _start_receiver(received)
-        home = Path(tempfile.mkdtemp(prefix="marbletrack-selftest-"))
+        # a data folder with a non-Latin name, as under a Persian Windows user name
+        home = Path(tempfile.mkdtemp(prefix="marbletrack-selftest-آزمون-"))
         app = App(home=home, demo=True)
         srv = Server(app).start()
         with urllib.request.urlopen(srv.url.replace("/?k=", "/api/state?k="), timeout=10) as r:
@@ -63,6 +73,10 @@ def run_selftest(out: Path | None = None, live_seconds: float = 25.0, cameras: i
             app.autofill_colours(c.key)
         check("colour calibration", not app.step_status()["colours"], f"{time.time() - t:.1f} s")
         app.update_server(url=f"ws://127.0.0.1:{port}", station_id="selftest")
+        app.update_record(enabled=True)
+        app.save()
+        check("map saved", all((app.folder / c.background_file).is_file() for c in app.project.active_cameras if c.background_file),
+              f"{app.folder}")
         tr = app.test_server()
         check("server test", tr["ok"], tr["detail"])
         app.go_live()
@@ -79,6 +93,10 @@ def run_selftest(out: Path | None = None, live_seconds: float = 25.0, cameras: i
             time.sleep(1)
         live = app.live_status()
         app.stop_live()
+        videos = [p for p in home.rglob("*.avi") if p.stat().st_size > 0]
+        check("recording", len(videos) == len(live["cameras"]), f"{len(videos)} camera videos")
+        for p in videos:  # large; the check is that they could be written at all
+            p.unlink()
         errors = {k: v["error"] for k, v in live["cameras"].items() if v["error"]}
         check("camera processes", not errors, errors or f"{len(live['cameras'])} running")
         dets = sum(1 for v in live["cameras"].values() if v.get("fps", 0) > 0)
@@ -100,6 +118,31 @@ def run_selftest(out: Path | None = None, live_seconds: float = 25.0, cameras: i
     if out:
         Path(out).write_text(json.dumps(report, indent=2), encoding="utf-8")
     return 0 if report["ok"] else 1
+
+
+def _ndi_finder_ok() -> bool:
+    try:
+        from cyndilib.finder import Finder  # type: ignore
+
+        f = Finder()
+        f.open()
+        f.close()
+        return True
+    except Exception as e:
+        log.error("NDI finder: %s", e)
+        return False
+
+
+def _webview_ok() -> bool:
+    try:
+        import webview  # noqa: F401  # type: ignore
+
+        if sys.platform == "win32":
+            import webview.platforms.edgechromium  # noqa: F401  # type: ignore
+        return True
+    except Exception as e:
+        log.error("pywebview: %s", e)
+        return False
 
 
 def _start_receiver(store: list) -> int:

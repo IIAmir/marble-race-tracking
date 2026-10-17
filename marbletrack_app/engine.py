@@ -180,6 +180,11 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
                 pass
 
 
+# A camera counts as failed after this long without a frame. Thirteen NDI streams on one PC have
+# short delivery gaps (a few frames) that are not failures; a real one shows after a second.
+CAMERA_TIMEOUT = 1.0
+
+
 class RaceSession:
     def __init__(self, project: Project, cameras: dict, has_finish_cam: bool):
         self.id = uuid.uuid4().hex[:12]
@@ -191,12 +196,15 @@ class RaceSession:
         self.engine = FusionEngine(ids, (laps - 1) * project.track_length + project.finish_s, project.track_length,
                                    cameras=cameras, laps=laps, lap_length=lap,
                                    static_blind_zones=blind, rank_margin=project.marble_diameter_mm / 2000.0,
-                                   photo_finish_s=0.0005 if has_finish_cam else 0.006)
+                                   photo_finish_s=0.0005 if has_finish_cam else 0.006,
+                                   camera_timeout=CAMERA_TIMEOUT)
         self.t0: float | None = None  # race clock origin (app time)
         self.state = "waiting"  # waiting -> running -> complete
         self.finished_ids: set[str] = set()
         self.first_finish: float | None = None
         self.last_seen = 0.0
+        self.progress_t = 0.0  # when an unfinished marble last made progress (a stuck one does not count)
+        self.best_s: dict[str, float] = {}
         self.quiet = False
         self.late = False
         self.n_events = 0
@@ -245,9 +253,11 @@ class Runtime:
         self.board: list = []
         self.thread = threading.Thread(target=self._fusion_loop, daemon=True, name="fusion")
         self._running = False
+        self.fusion_error = ""  # the last error of the fusion step (logged once per kind)
         self.history: deque = deque(maxlen=20)
         self._publish_every = 1.0 / max(1.0, project.server.publish_hz)
         self._next_pub = 0.0
+        self._next_logic = 0.0
         self.harvesting: str | None = None
         self.frozen = False  # operator: hold the board on air as it is
         self.hidden = False  # operator: take the board off air
@@ -276,25 +286,34 @@ class Runtime:
     def stop(self):
         self._running = False
         self.stop_evt.set()
-        for p in self.procs.values():
-            p.join(timeout=3)
-            if p.is_alive():
-                p.terminate()
         if self.thread.is_alive():
             self.thread.join(timeout=3)
-        self._drain_recorded()
+        # Keep reading the queue while the camera processes exit: a process that still has a
+        # message in the pipe cannot finish until someone reads it (on Windows, anything bigger
+        # than the pipe buffer, e.g. a preview picture). One deadline for all of them.
+        deadline = time.monotonic() + 5.0
+        while any(p.is_alive() for p in self.procs.values()) and time.monotonic() < deadline:
+            self._drain_recorded(wait=0.05)
+        for p in self.procs.values():
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=1)
+        self._drain_recorded(wait=0.2)
         self._event("tracking_stopped", {})
         if self.session_log is not None:
-            self.session_log.close()
+            try:
+                self.session_log.close()
+            except OSError:
+                log.exception("closing the session log failed")
 
-    def _drain_recorded(self):
-        """Collect the camera processes' recording summaries (sent as they exit)."""
+    def _drain_recorded(self, wait: float = 0.2):
+        """Empty the queue, keeping the camera processes' recording summaries (sent as they exit)."""
         while True:
             try:
-                msg = self.out_q.get(timeout=0.2)
-            except (queue.Empty, EOFError, OSError):
+                msg = self.out_q.get(timeout=wait)
+            except (queue.Empty, EOFError, OSError, ValueError):
                 return
-            if msg[0] == "recorded":
+            if msg and msg[0] == "recorded":
                 self._handle(msg, self.now())
 
     def harvest(self, label: str | None, folder=None):
@@ -352,11 +371,16 @@ class Runtime:
         ids = {m.id for m in self.project.marbles}
         with self.lock:
             race = self.race
+            want = args.get("race_id")
+            if want and want != race.id and action in ("swap", "set_order", "confirm"):
+                # the operator looked at another race (a new one started meanwhile): do not apply it here
+                raise ValueError("a new race has started since: look at the board again")
             if action == "swap":
                 a, b = args["a"], args["b"]
                 if a == b or a not in ids or b not in ids:
                     raise ValueError("pick two different marbles")
                 race.engine.swap_identities(a, b)
+                race.finished_ids = {m.marble_id for m in race.engine.marbles if m.finish_time is not None}
                 detail = {"a": a, "b": b}
             elif action == "set_order":
                 # may be partial: marbles not listed follow in the tracker's order
@@ -390,7 +414,14 @@ class Runtime:
                 msg = None
             except (EOFError, OSError):
                 break
-            self.step(msg, self.now())
+            try:
+                self.step(msg, self.now())
+            except Exception as e:  # one bad message must not freeze the board for the rest of the show
+                key = f"{type(e).__name__}: {e}"
+                if key != self.fusion_error:
+                    log.exception("fusion step failed")
+                    self.fusion_error = key
+                    self._event("engine_error", {"error": key})
             for k, p in self.procs.items():
                 st = self.cam_state[k]
                 if not p.is_alive() and not st["error"] and self._running:
@@ -415,7 +446,9 @@ class Runtime:
                 if ev.kind in ("camera_offline", "camera_online"):
                     self._event(ev.kind, {"camera": ev.subject, "name": self.cam_state.get(ev.subject, {}).get("name", ev.subject)})
             race.n_events = len(race.engine.events)
-            self._race_logic(race, now)
+            if now >= self._next_logic:  # start, finishes, completion: 50 times a second is plenty
+                self._next_logic = now + 0.02
+                self._race_logic(race, now)
             if now >= self._next_pub:
                 self._next_pub = now + self._publish_every
                 self.board = self._board(race)
@@ -480,8 +513,15 @@ class Runtime:
                     race.first_finish = race.first_finish or now
                     self._event("finish", {"race_id": race.id, "marble_id": e.marble_id, "name": self._name(e.marble_id),
                                            "rank": e.rank, "time": round(e.finish_time - race.t0, 4)})
-            done = len(race.finished_ids) == len(self.project.marbles)
-            stale = race.first_finish is not None and now - max(race.last_seen, race.first_finish) > 15
+            # from the engine, not from the finish events: an operator swap moves a finish to another name
+            done = all(m.finish_time is not None for m in eng.marbles)
+            for m in eng.marbles:
+                if m.finish_time is None and m.last_obs_s is not None and m.last_obs_s > race.best_s.get(m.marble_id, -np.inf) + 0.02:
+                    race.best_s[m.marble_id] = m.last_obs_s
+                    race.progress_t = now
+            # 15 s after the first finish with no unfinished marble getting any further (lost, stuck in
+            # view, or fewer marbles raced than the map lists): the race is over
+            stale = race.first_finish is not None and now - max(race.progress_t, race.first_finish) > 15
             if done or stale:
                 for mid in eng.estimate_missing_finishes():
                     self._event("finish_estimated", {"race_id": race.id, "marble_id": mid, "name": self._name(mid)})
@@ -529,7 +569,10 @@ class Runtime:
 
     def _event(self, kind: str, data: dict, log: bool = True):
         if log and self.session_log is not None:
-            self.session_log.event(self.now(), kind, data)
+            try:  # recording is best-effort: a full disk must not stop the show
+                self.session_log.event(self.now(), kind, data)
+            except (OSError, ValueError):
+                logging.getLogger("marbletrack.engine").exception("session log write failed")
         if log:
             self.log.appendleft({"t": time.time(), "kind": kind, **{k: v for k, v in data.items() if k != "board"}})
         try:
@@ -545,5 +588,6 @@ class Runtime:
                              "confirmed": race.confirmed, "manual": bool(race.manual_order)},
                     "frozen": self.frozen, "hidden": self.hidden,
                     "rack": {k: v["slots"] for k, v in self.rack.items()}, "harvesting": self.harvesting,
-                    "board": self.board, "cameras": self.cam_state, "log": list(self.log)[:60],
-                    "history": list(self.history)[:5]}
+                    # copies: the fusion thread keeps changing these while the page is being sent
+                    "board": list(self.board), "cameras": {k: dict(v) for k, v in self.cam_state.items()},
+                    "log": list(self.log)[:60], "history": list(self.history)[:5], "fusion_error": self.fusion_error}

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .imageio import imwrite, native_path
 from .recording import read_frames_csv, read_jsonl
 
 BOARD_DELAY = 0.08  # the live reorder buffer: a board published at `now` shows the track at about now - 0.08 s
@@ -154,7 +155,7 @@ def propose(session: Path, gates: list[float], boards_path: Path | None = None, 
             r_px = float(np.interp(g, cam.marker_s, C.marble_radius_px(cam, project)))
             h = int(np.clip(6 * r_px, 40, strip_px))  # about six marble radii around the gate
             rows = read_frames_csv(session / "cameras" / f"{manifest['cameras'][cam.key]}.csv")
-            cap = cv2.VideoCapture(str(session / "cameras" / f"{manifest['cameras'][cam.key]}.avi"))
+            cap = cv2.VideoCapture(native_path(session / "cameras" / f"{manifest['cameras'][cam.key]}.avi"))
             tiles = []
             for mid in o["order"]:
                 # board times are on the arrival clock and lag the picture by the reorder delay
@@ -178,7 +179,7 @@ def propose(session: Path, gates: list[float], boards_path: Path | None = None, 
                 tiles.append(crop)
             cap.release()
             if tiles:
-                cv2.imwrite(str(out_dir / f"gate-{g:.2f}.jpg"), np.hstack(tiles))
+                imwrite(out_dir / f"gate-{g:.2f}.jpg", np.hstack(tiles))
             entry["camera"] = cam.name
         proposal["gates"].append(entry)
     path = out_dir / "labels.json"
