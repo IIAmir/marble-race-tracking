@@ -1,8 +1,8 @@
 # Venue simulator
 
 A test bench that films whole races the way the venue will: a procedural
-diorama circuit, 2.5 cm billiard balls rolling under real physics, the 13 AIDA
-track cameras and the OBSBOT overhead with their optics, and the app's own
+diorama circuit, 2.5 cm billiard balls rolling under real physics, the 12 AIDA
+track cameras and the OBSBOT overhead (13 cameras) with their optics, and the app's own
 calibration, detector, fusion and leaderboard code in between. Every
 rendered frame goes through exactly the code path of the Windows app; only the
 pixels and the clock are simulated.
@@ -18,7 +18,7 @@ python scripts/venue_suite.py --seeds 1 2 3 --scenarios venue --cache cache/   #
 python scripts/venue_suite.py --stills 1                                       # results/stills/venue_cameras.jpg
 ```
 
-A race of ~38 s renders and tracks 32,000 frames (14 cameras × 60 fps); on a
+A race of ~38 s renders and tracks 32,000 frames (13 cameras × 60 fps); on a
 4-core machine that takes about 18 minutes. The live system does the same work
 in real time (see EQUIPMENT.md §7 for the per-frame cost on the venue PC).
 
@@ -102,7 +102,7 @@ tests: balls bounce back into them off spinners and sit there for seconds.
 
 ## Results
 
-Seven routes, one race each (10 marbles, one lap of 30–38 m, 14 cameras), scored with the
+Seven routes, one race each (10 marbles, one lap of 30–38 m, 13 cameras: 12 AIDA + OBSBOT), scored with the
 current tracker (`python scripts/venue_suite.py --rescore --seeds 1 2 3 4 5 6 7 --cache cache`,
 `results/venue_rescored.json`). Routes 1–4 were used to find and fix the problems above;
 routes 5–7 were never looked at before this table.
@@ -110,12 +110,12 @@ routes 5–7 were never looked at before this table.
 | Route | Ranks right (visible marbles) | Phantom overtakes shown | Final order | Finish time error (max) |
 |---|---|---|---|---|
 | 1 | 99.73 % | 1 | correct | 5.0 ms |
-| 2 | 98.70 % | 7 | correct | 3.4 ms |
+| 2 | 98.07 % | 8 | correct | 3.4 ms |
 | 3 | 99.93 % | 0 | correct | 9.2 ms |
-| 4 | 99.33 % | 6 | correct | 3.3 ms |
-| 5 (held out) | 99.88 % | 13 | correct | 2.0 ms |
+| 4 | 99.33 % | 8 | correct | 1.6 ms |
+| 5 (held out) | 99.83 % | 14 | correct | 2.0 ms |
 | 6 (held out) | 100.00 % | 1 | correct | 3.6 ms |
-| 7 (held out) | 99.94 % | 3 | correct | 7.6 ms |
+| 7 (held out) | 99.94 % | 3 | correct | 6.9 ms |
 
 The final order is right on all seven routes, and on route 5 only because a finish missed at
 the line is now estimated and flagged for review (fix 8 above; on site the rack check would

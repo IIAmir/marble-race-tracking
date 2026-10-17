@@ -8,13 +8,13 @@ occlusion handling and a live leaderboard.
 * **Showing it (demo guide):** [`docs/DEMO.md`](docs/DEMO.md); venue race video: [`results/venue_race.mp4`](results/venue_race.mp4)
 * **User guide (Persian, PDF):** [`docs/MarbleTrack-Guide-FA.pdf`](docs/MarbleTrack-Guide-FA.pdf): installation, every setup step with where to click, race control, troubleshooting
 * **Architecture and implementation plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-* **Venue equipment** (13 AIDA HD-NDI-IP67 NDI cameras, OBSBOT Tail 2 overhead, vMix, one PC): what it
+* **Venue equipment** (13 cameras: 12 AIDA HD-NDI-IP67 NDI cameras and an OBSBOT Tail 2 overhead; vMix, one PC): what it
   changes, what to measure on site, and the marble colour set: [`docs/EQUIPMENT.md`](docs/EQUIPMENT.md)
 * **Production-readiness report:** [`docs/readiness-report.html`](docs/readiness-report.html)
 * **Windows app for the venue PC** (camera discovery, setup wizard, live tracking, WebSocket leaderboard
   streaming): [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md). Run with `python -m marbletrack_app --demo`, or build
   `MarbleTrack.exe` with `windows\build.ps1`
-* **Venue simulator** (procedural circuits, billiard balls, the 13 AIDA + OBSBOT cameras rendered and
+* **Venue simulator** (procedural circuits, billiard balls, the 12 AIDA + OBSBOT cameras rendered and
   tracked through the app's own calibration and tracker; what it found and fixed):
   [`docs/VENUE_SIMULATOR.md`](docs/VENUE_SIMULATOR.md), run with `python scripts/venue_suite.py`
 * **Live race simulator:** [`demo/simulator.html`](demo/simulator.html), open in a browser (see below)

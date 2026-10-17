@@ -105,7 +105,7 @@ table.tower { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
     <label class="f">Laps <select id="laps"><option>1</option><option>2</option><option selected>3</option><option>5</option></select></label>
     <label class="f">Chaos <select id="chaos"><option value="0.1">Calm</option><option value="0.35" selected>Normal</option><option value="0.55">Wild</option></select></label>
     <label class="f"><input type="checkbox" id="obstacles" checked> Obstacles</label>
-    <label class="f">Cameras <select id="rig"><option value="angled">14 angled cams</option><option value="overhead">1 overhead cam</option><option value="hybrid">Both</option></select></label>
+    <label class="f">Cameras <select id="rig" title="The venue: 12 AIDA cameras along the track (one of them at the finish line) and the OBSBOT overhead, 13 in all"><option value="hybrid" selected>Venue: 12 + overhead</option><option value="angled">12 track cams</option><option value="overhead">Overhead + finish cam</option></select></label>
     <span class="sep"></span>
     <button id="newRace" class="primary" type="button" title="New race (N)">New race</button>
     <button id="restart" type="button" title="Restart same race (R)">Restart</button>
@@ -729,7 +729,7 @@ class RigCam {
     return w >= lo || w <= hi;  // wraps around the lap line
   }
 }
-function buildRig(track, kind, nSeg = 14) {
+function buildRig(track, kind, nSeg = 11) {  // 11 section cameras + the finish camera = the venue's 12 AIDA
   const cams = [], L = track.L, T = track;
   const box = new THREE.Box3(); for (let i = 0; i <= T.N; i += 10) box.expandByPoint(new V3(T.px[i], T.py[i], T.pz[i]));
   const center = box.getCenter(new V3()), size = box.getSize(new V3());
@@ -1551,7 +1551,7 @@ function buildWorld(seed) {
     state: "grid", tStart: performance.now(), lastEval: 0, replay: [], metrics: newMetrics(), log: [], faults: { dim: false, jitter: false },
     tv: { cam: null, since: -9 }, prevOrder: null, truthHist: [], selected: null, speedHist: phys.m.map(() => []), liftTex: root.userData.liftTex };
   $("laps").disabled = !mdef.laps;
-  $("rigName").textContent = { angled: "14 angled cams", overhead: "1 overhead cam", hybrid: "overhead + 14 angled" }[$("rig").value];
+  $("rigName").textContent = { angled: "12 track cams", overhead: "overhead + finish cam", hybrid: "12 track cams + overhead" }[$("rig").value];
   $("towerNote").textContent = mdef.laps ? `${phys.laps} laps · T = true position` : "T = true position";
   {  // calibration rule: every pair of marbles in the race must be separable (d² ≥ 50)
     let worst = [Infinity, "", ""];

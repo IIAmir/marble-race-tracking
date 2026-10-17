@@ -1,4 +1,4 @@
-"""Venue races: procedural circuits filmed by the 13 AIDA cameras and the OBSBOT, tracked by the app's code.
+"""Venue races: procedural circuits filmed by the 12 AIDA cameras and the OBSBOT, tracked by the app's code.
 
     python scripts/venue_suite.py --seeds 1 2 3 --scenarios venue venue_laps --out results/venue.json
     python scripts/venue_suite.py --stills 1          # contact sheet of what the cameras see

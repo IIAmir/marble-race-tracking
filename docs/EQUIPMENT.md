@@ -13,8 +13,8 @@ the real cameras.
 
 | | Model | What matters for tracking |
 |---|---|---|
-| Track cameras (×13) | **AIDA Imaging HD-NDI-IP67** | 1/3" progressive CMOS (5.35 × 3.00 mm, 1920×1080), 1080p60, **NDI\|HX** (compressed) plus RTSP/SRT, CS-mount 4 mm lens (6 / 8 / 12 mm available), manual white balance, VISCA over IP, 12 V or PoE, IP67. |
-| Overhead camera (×1) | **OBSBOT Tail 2** | 1/1.5" 50 MP sensor, 4K60 and 1080p120, 5× optical zoom (81° horizontal at wide end), **NDI\|HX3**, PoE+ (802.3at, ~30 W), AI auto-tracking PTZ. |
+| Track cameras (×12) | **AIDA Imaging HD-NDI-IP67** | 1/3" progressive CMOS (5.35 × 3.00 mm, 1920×1080), 1080p60, **NDI\|HX** (compressed) plus RTSP/SRT, CS-mount 4 mm lens (6 / 8 / 12 mm available), manual white balance, VISCA over IP, 12 V or PoE, IP67. |
+| Overhead camera (×1; 13 cameras in all) | **OBSBOT Tail 2** | 1/1.5" 50 MP sensor, 4K60 and 1080p120, 5× optical zoom (81° horizontal at wide end), **NDI\|HX3**, PoE+ (802.3at, ~30 W), AI auto-tracking PTZ. |
 | PC | Ryzen 9 9900X3D (12 cores / 24 threads), 64 GB DDR5, RTX 5080, 2 TB NVMe, **5 GbE**, Windows 11 | Runs vMix and MarbleTrack. |
 | Production | **vMix** | Receives every camera over NDI; shows the graphics. |
 
@@ -169,7 +169,7 @@ and their frames reach the PC after encoding, the network and decoding, with jit
   camera's own spacing (no network jitter), and the camera clocks need no synchronisation.
   In a test with 6 ms of random network jitter the stamps were within 1 ms of the truth
   (`tests/test_equipment.py`).
-- **The constant delay** from exposure to sending (encoder latency) is the same for all 13
+- **The constant delay** from exposure to sending (encoder latency) is the same for all 12
   AIDA cameras, so it does not change who is ahead. It shifts the race clock, and differs
   between the AIDA and the OBSBOT. Measure it once: point all cameras at one flashing LED,
   record, and enter each camera's offset as *Latency* in setup step 2.
@@ -186,9 +186,9 @@ and their frames reach the PC after encoding, the network and decoding, with jit
 Every camera stream is received twice, once by vMix and once by MarbleTrack. Each
 receiver decodes it (NDI|HX is H.264/H.265).
 
-- **Network.** 14 NDI|HX streams at 1080p60/4K are well under 1 Gbit/s even counted twice,
+- **Network.** 13 NDI|HX streams at 1080p60/4K are well under 1 Gbit/s even counted twice,
   so the 5 GbE port is ample. Use a managed switch with **PoE+ (802.3at) on every port** and a
-  budget for 13 AIDA cameras plus the OBSBOT's 30 W, and a 2.5/5/10 GbE uplink to the PC.
+  budget for 12 AIDA cameras plus the OBSBOT's 30 W, and a 2.5/5/10 GbE uplink to the PC.
 - **CPU, measured** (one core of a 2.8 GHz cloud Xeon, simulated frames with ten balls in view;
   `scripts/benchmark.py` style):
 
@@ -196,11 +196,11 @@ receiver decodes it (NDI|HX is H.264/H.265).
   |---|---|---|---|---|
   | AIDA 1920×1080 | 739×416 | 12.9 ms | 0.77 | 0.39 |
   | OBSBOT 3840×2160 | 1527×859 | 28.2 ms | 1.69 | 0.85 |
-  | All 13 AIDA + OBSBOT | | | ~11.7 | ~5.9 |
+  | All 12 AIDA + OBSBOT | | | ~10.9 | ~5.5 |
 
   Fusion (ranking all balls) adds about 1.5 ms per batch of camera frames: negligible.
   A Ryzen 9 9900X3D core is roughly 1.5–2× faster than this cloud core, so all cameras at 60 fps
-  should need about 6–8 of its 12 cores (est.), leaving the rest for NDI decoding and vMix.
+  should need about 6–7 of its 12 cores (est.), leaving the rest for NDI decoding and vMix.
   This is feasible but tight; measure it on the venue PC (the live screen shows every camera's
   frame rate and processing time). If it does not fit, in order: process 30 frames per second
   instead of 60, move decoding to the RTX 5080, or run MarbleTrack on a second PC.

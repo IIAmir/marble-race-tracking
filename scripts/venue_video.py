@@ -5,7 +5,7 @@
 Every tile is a simulated venue camera (AIDA 1080p or the OBSBOT overhead) at
 the moment shown, with each detection circled in the colour of the marble it
 was identified as. The board on the right is the fusion engine's leaderboard
-from all fourteen cameras, as it went out, with a check mark where the shown
+from all thirteen cameras, as it went out, with a check mark where the shown
 rank agrees with the true order (the physics) and the true order beside it.
 The tiles' detections come from running the app's detector on these frames;
 the board from fusing every camera's detections (``--cache`` holds them from
@@ -83,6 +83,7 @@ def _boards(seed, sc, cache):
     if not path.exists():
         R.run_venue_race(seed, sc, cache_dir=str(cache))
     saved = pickle.load(open(path, "rb"))
+    saved["sc"] = sc  # the current rig (the cache may hold detections of a bigger one)
     race, _ = R.prepare(seed, saved["sc"], str(cache))
     timeline = []
     from marbletrack import scoring
@@ -96,7 +97,7 @@ def _boards(seed, sc, cache):
 
     scoring.Scorer.evaluate = evaluate
     try:
-        rep = R.fuse_and_score(race, [r for r in saved["results"] if r["ok"]], saved["sc"])
+        rep = R.fuse_and_score(race, [r for r in saved["results"] if r["ok"] and R.in_rig(r["cam_id"], sc)], saved["sc"])
     finally:
         scoring.Scorer.evaluate = orig
     return race, timeline, rep
@@ -133,7 +134,7 @@ def _panel(h, board, truth, t, ids, names, colours, race, rep):
              "grey rows: not in view of any camera right now",
              "(a gap in coverage); they hold their place",
              "true = the true rank from the physics; ok = board agrees",
-             "simulated venue: 13 AIDA 1080p60 + OBSBOT 4K,",
+             "simulated venue: 12 AIDA 1080p60 + OBSBOT 4K,",
              "NDI timing, the app's own calibration and tracker"]
     for k, s in enumerate(lines):
         cv2.putText(p, s, (18, y0 + k * 26), cv2.FONT_HERSHEY_SIMPLEX, 0.47, (190, 190, 190), 1, cv2.LINE_AA)

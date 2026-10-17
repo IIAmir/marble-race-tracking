@@ -1,4 +1,4 @@
-"""Where the venue's cameras go on a new route: 13 AIDA track cameras and the OBSBOT overhead.
+"""Where the venue's cameras go on a new route: 12 AIDA track cameras and the OBSBOT overhead (13 in all).
 
 Placement is what an installer would do with a plan of the route: one camera on
 the start, one close on the finish line, and the other eleven chosen one by one
@@ -71,7 +71,7 @@ def _unblocked(scene: Scene, C, R, optics, samples, vis, size=(480, 270)):
     return out
 
 
-def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 13, overhead: bool = True):
+def place_cameras(course: Course, scene: Scene, seed: int = 0, n_track: int = 12, overhead: bool = True):
     rng = np.random.default_rng(seed + 404)
     step = 0.02
     s_samp = np.arange(0, course.length, step)

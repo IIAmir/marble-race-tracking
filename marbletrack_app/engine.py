@@ -45,7 +45,7 @@ def _work_scale(w: int, h: int, min_radius_px: float | None = None) -> float:
     """Processing scale for a camera's frames.
 
     The stress suite ran its detector at 640x480, so larger frames are processed
-    downscaled to about that pixel count, which keeps 14 cameras within a CPU budget.
+    downscaled to about that pixel count, which keeps the venue's 13 cameras within a CPU budget.
     A wide view in which marbles are small (an overhead 4K camera sees a 25 mm marble
     as ~10 px) is downscaled less, so that the smallest marble keeps a radius of at
     least ``MIN_WORK_RADIUS_PX``: below that, colour pixels and blob areas get too

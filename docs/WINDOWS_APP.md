@@ -23,7 +23,7 @@ Requirements:
 
 - **Windows 10 or 11 (64-bit).**
 - **Microsoft Edge WebView2 Runtime** for the app window. Windows 11 includes it, and the installer offers it when missing. Without it, MarbleTrack opens in the default browser instead.
-- **CPU:** about 0.3 cores per 30 fps camera, so 14 cameras plus a finish camera fit an 8-core PC (16 threads).
+- **CPU:** about 0.3 cores per 30 fps camera, so the venue's 13 cameras (12 AIDA, one OBSBOT) fit an 8-core PC (16 threads) at 30 fps; at 60 fps see EQUIPMENT.md §7.
 - **NDI cameras** (AIDA HD-NDI-IP67, OBSBOT Tail 2, any NDI or NDI|HX sender): supported out of the box; the NDI
   runtime comes with `cyndilib`. Allow MarbleTrack through the Windows firewall (private network) so that
   NDI discovery works.

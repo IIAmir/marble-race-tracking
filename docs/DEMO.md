@@ -5,7 +5,7 @@ Four things to show, each runs on its own; none needs cameras or internet.
 | # | What | How to start | Time |
 |---|---|---|---|
 | 1 | **The app** (setup wizard, live tracking, race control) on 15 demo cameras | `MarbleTrack (demo cameras)` from the Start menu, or `python -m marbletrack_app --demo` | 5–10 min |
-| 2 | **The venue simulator video**: 9 of the 14 venue cameras, the tracker's detections, the live board against the truth | open `results/venue_race.mp4` | 1 min |
+| 2 | **The venue simulator video**: 9 of the 13 venue cameras, the tracker's detections, the live board against the truth | open `results/venue_race.mp4` | 1 min |
 | 3 | **The live race simulator** in the browser: the venue routes in a forest landscape, billiard balls, laps, tracker vs truth, failures on demand | open `demo/simulator.html` (double-click) | 3–5 min |
 | 4 | **Replay in 3D** of recorded tracker output | open `demo/track3d.html` | 1–2 min |
 
@@ -50,10 +50,10 @@ The user guide for the people who will run it, in Persian with screenshots of ev
 
 ## 2. Venue simulator video
 
-`results/venue_race.mp4`, route 6. Left: nine of the fourteen venue cameras (13 AIDA 1080p60
+`results/venue_race.mp4`, route 6. Left: nine of the thirteen venue cameras (12 AIDA 1080p60
 and the OBSBOT overhead in 4K), rendered from a physical simulation of 2.5 cm billiard balls
-on a new 37 m route; circles are what the app's detector found. Right: the board the app
-produced from all fourteen cameras, with the true rank beside it. Grey rows are marbles in a
+on a new 30 m route; circles are what the app's detector found. Right: the board the app
+produced from all thirteen cameras, with the true rank beside it. Grey rows are marbles in a
 stretch no camera sees; they keep their place. For the numbers over seven routes see
 `docs/VENUE_SIMULATOR.md`.
 
@@ -80,7 +80,8 @@ pixel-level test of the tracker is the venue simulator (2. above).
 ## What to say about accuracy
 
 * Simulated venue, seven routes (three never used for tuning): the final order was right in
-  all seven, ranks of visible marbles right 98.7–100 % of the time, finish times within 2–9 ms.
+  all seven, ranks of visible marbles right 98.1–100 % of the time, finish times within 2–9 ms
+  (13 cameras: 12 AIDA + the OBSBOT).
 * The independent stress suite (66 races): no wrong order, no identity errors.
 * The simulator cannot certify the system: the next step is recording 20+ real races at the
   venue and scoring them (`docs/EQUIPMENT.md` §11). The result shown on air stays provisional

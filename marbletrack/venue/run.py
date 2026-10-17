@@ -1,4 +1,4 @@
-"""A venue race end to end: course, physics, the 14 cameras, the app's calibration and tracker, scored.
+"""A venue race end to end: course, physics, the 13 cameras, the app's calibration and tracker, scored.
 
 Everything between the rendered frames and the leaderboard is the production
 code path of the Windows app:
@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import os
 import pickle
+import re
 import tempfile
 import time
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -48,12 +49,12 @@ class CalibrationFailed(Exception):
 @dataclass
 class VenueScenario:
     name: str = "venue"
-    description: str = "The venue: 13 AIDA cameras + OBSBOT overhead, 60 fps, NDI timing."
+    description: str = "The venue: 12 AIDA cameras + OBSBOT overhead, 60 fps, NDI timing."
     laps: int = 1
     balls: str = "fixed"  # fixed: 9 replaced by a pink ball; real: the yellow-stripe 9
     fps: float = 60.0
     overhead: bool = True
-    n_track: int = 13
+    n_track: int = 12  # AIDA cameras, the finish and start cameras included
     light_ramp: tuple | None = None  # (t0, t1, final brightness factor)
     frame_drop: float = 0.002
     net_delay: tuple = (0.002, 0.004)  # minimum, mean of the exponential extra (s)
@@ -328,9 +329,17 @@ def rescore(seed: int, scenario: str, cache_dir: str) -> dict:
     """Fusion and scoring again on the detections a previous run saved (no rendering)."""
     with open(os.path.join(cache_dir, f"venue_dets_{seed}_{scenario}.pkl"), "rb") as f:
         saved = pickle.load(f)
-    sc = saved["sc"]
+    sc = replace(saved["sc"], n_track=SCENARIOS[scenario].n_track)
     race, _ = prepare(seed, sc, cache_dir)
-    return fuse_and_score(race, [r for r in saved["results"] if r["ok"]], sc)
+    return fuse_and_score(race, [r for r in saved["results"] if r["ok"] and in_rig(r["cam_id"], sc)], sc)
+
+
+def in_rig(cam_id: str, sc: VenueScenario) -> bool:
+    """Whether a camera saved by an earlier run belongs to this scenario's rig. The rig is placed one
+    camera at a time (finish, start, then cam01, cam02, ... greedily), so a smaller rig is the first
+    cameras of a bigger one and its detections can be reused without rendering again."""
+    m = re.fullmatch(r"cam(\d+)", cam_id)
+    return m is None or int(m.group(1)) <= sc.n_track - 2
 
 
 def fuse_and_score(race: Race, cams: list[dict], sc: VenueScenario) -> dict:
