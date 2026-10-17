@@ -326,7 +326,7 @@ VIEWS.cameras = {
     if (!box) return;
     if (!cams.length) {
       box.innerHTML = `<div class="card empty-state"><h3>No cameras found</h3><p>MarbleTrack looks for NDI cameras on the network, USB cameras and industrial (Basler) cameras.</p>
-        <ul><li>Check the cable and that the camera has power.</li><li>NDI cameras: the PC and the cameras must be on the same network, and Windows Firewall must allow MarbleTrack on private networks.</li><li>Close other apps that use the camera (Teams, Zoom, the Camera app).</li>
+        <ul><li>Check the cable and that the camera has power.</li><li>NDI cameras: the PC and the cameras must be on the same network, and Windows Firewall must allow MarbleTrack (the installer adds this rule; if Windows asked, tick both Private and Public).</li><li>Close other apps that use the camera (Teams, Zoom, the Camera app).</li>
         <li>Many cameras on one USB controller can exceed its bandwidth: spread them over ports or add a USB card.</li>
         <li>Basler cameras need the pylon software installed.</li></ul>
         ${S.st.demo ? "" : '<p class="hint">To try MarbleTrack without hardware, start it with <code>--demo</code>.</p>'}</div>`;
