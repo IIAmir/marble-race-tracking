@@ -116,7 +116,7 @@ class VmixClient:
             return [(k, v) for k, v in self._want.items() if self._sent.get(k) != v]
 
     def _run(self):
-        backoff = 0.5
+        backoff, logged = 0.5, ""
         while not self._stop.is_set():
             self.state, self.detail = "connecting", f"Connecting to vMix at {self.cfg.host}:{self.cfg.port}"
             try:
@@ -126,7 +126,7 @@ class VmixClient:
                     reader = sock.makefile("rb")
                     self.state, self.detail = "connected", f"Filling title {self.cfg.input!r}"
                     self._sent.clear()  # vMix may have restarted: send every field again
-                    backoff = 0.5
+                    backoff, logged = 0.5, ""
                     while not self._stop.is_set():
                         todo = self._pending()
                         if not todo:
@@ -149,9 +149,12 @@ class VmixClient:
             except Exception as e:
                 if self._stop.is_set():
                     break
-                self.last_error = _explain(e, self.cfg)
+                err = _explain(e, self.cfg)
+                if err != logged:  # vMix closed all day: one line in the log, not one every 5 s
+                    log.warning("vMix: %s", err)
+                    logged = err
+                self.last_error = err
                 self.state, self.detail = "reconnecting", f"{self.last_error} Retrying in {backoff:.0f} s."
-                log.warning("vMix: %s", self.last_error)
                 self._stop.wait(backoff)
                 backoff = min(5.0, backoff * 2)
         self.state, self.detail = "stopped", ""

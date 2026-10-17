@@ -180,6 +180,9 @@ def camera_worker(spec: dict, calib_blob: bytes, t0: float, out_q, cmd_q, stop_e
                 pass
 
 
+# Camera messages handled per fusion step at most (a backlog is worked off in a few steps).
+MAX_BATCH = 400
+
 # A camera counts as failed after this long without a frame. Thirteen NDI streams on one PC have
 # short delivery gaps (a few frames) that are not failures; a real one shows after a second.
 CAMERA_TIMEOUT = 1.0
@@ -408,14 +411,19 @@ class Runtime:
     # -- fusion loop ----------------------------------------------------------------
     def _fusion_loop(self):
         while self._running:
+            msgs = []
             try:
-                msg = self.out_q.get(timeout=0.01)
+                msgs.append(self.out_q.get(timeout=0.01))
+                # everything that is waiting, then one fusion step: with thirteen cameras at 60 fps a step per
+                # message falls behind on a busy PC, and the board would lag further and further behind
+                while len(msgs) < MAX_BATCH:
+                    msgs.append(self.out_q.get_nowait())
             except queue.Empty:
-                msg = None
+                pass
             except (EOFError, OSError):
                 break
             try:
-                self.step(msg, self.now())
+                self.step(msgs, self.now())
             except Exception as e:  # one bad message must not freeze the board for the rest of the show
                 key = f"{type(e).__name__}: {e}"
                 if key != self.fusion_error:
@@ -428,13 +436,13 @@ class Runtime:
                     st["error"], st["online"] = "camera process stopped", False
 
     def step(self, msg, now: float):
-        """One turn of the fusion loop: take a camera message (or none), fuse, publish when due.
+        """One turn of the fusion loop: take a camera message, a list of them, or none; fuse, publish when due.
 
         The live loop calls it with the wall clock; ``replay`` calls it with the
         recorded arrival times, so a recorded session is tracked exactly as live.
         """
-        if msg is not None:
-            self._handle(msg, now)
+        for m in (msg if isinstance(msg, list) else [] if msg is None else [msg]):
+            self._handle(m, now)
         with self.lock:
             race = self.race
             for t, cam, dets in self.buf.pop_ready(now):

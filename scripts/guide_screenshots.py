@@ -55,7 +55,7 @@ def setup():
       return [s, r.left / innerWidth, r.top / innerHeight, r.width / innerWidth, r.height / innerHeight]; })"""
     with sync_playwright() as p:
         b = p.chromium.launch(**({"executable_path": os.environ["CHROMIUM"]} if os.environ.get("CHROMIUM") else {}))  # CHROMIUM: a browser other than Playwright's own
-        ctx = b.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1.5)
+        ctx = b.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1.5, reduced_motion="reduce")  # no row animation mid-shot
         ctx.add_init_script(f"try {{ localStorage.setItem('marbletrack.lang', '{LANG}') }} catch {{}}")
         pg = ctx.new_page()
         pg.on("pageerror", lambda e: print("ERR", e, flush=True))
@@ -70,10 +70,15 @@ def setup():
         def step(sid):
             pg.click(f'#rail [data-step="{sid}"]'); pg.wait_for_timeout(1200)
         pg.goto(URL); pg.wait_for_timeout(2500)
+        # a route saved earlier, so the maps window lists two maps
+        pg.evaluate("""async () => { await api('update_race', { name: 'مسیر قرعهٔ ۱', notes: 'قرعهٔ اول؛ مارپیچ وسط مسیر' });
+          await api('save', {}); await api('new_map', { name: 'جام شنبه' }); await api('save', {}); }""")
+        pg.reload(); pg.wait_for_timeout(2500)
         shot("00-first-run")
-        pg.fill("#pname", "Saturday cup"); pg.press("#pname", "Tab")
         shot("01-race")
-        pg.click("details.more summary"); shot("02-race-more")
+        pg.click("details.more summary"); pg.wait_for_timeout(300)
+        pg.evaluate("document.querySelector('#prack')?.scrollIntoView({ block: 'center' })"); shot("02-race-more")
+        pg.evaluate("window.scrollTo(0, 0); document.querySelectorAll('main, .main, #main').forEach((e) => e.scrollTo?.(0, 0))")
         pg.click("#mapsBtn"); shot("03-maps"); pg.click("#mclose")
         step("cameras"); pg.wait_for_selector(".cam", timeout=60000); shot("04-cameras", wait=3000)
         step("waypoints"); shot("05-waypoints-empty", wait=2500)
@@ -84,17 +89,27 @@ def setup():
         pg.click("#auto"); pg.wait_for_timeout(8000); shot("09-colours-done", wait=2500)
         step("server"); shot("10-output")
         pg.click("#ven"); pg.wait_for_timeout(500); pg.click("#vtest"); shot("10b-output-vmix-test", wait=4000)
-        pg.click("#ven"); pg.wait_for_timeout(500)
         step("review"); shot("11a-review-incomplete", wait=2000)
         pg.click("#demoAll"); pg.wait_for_timeout(70000)
         step("review"); shot("11-review", wait=2500)
         pg.click("#checkViews"); shot("11b-review-views", wait=8000)
-        pg.click("#golive"); pg.wait_for_timeout(8000); shot("12-live", wait=1000)
-        for k in range(40):
+        # the live screen with the start half of the track and the finish camera: fewer camera processes
+        pg.evaluate("""async () => { for (const c of S.st.cameras) if (/cam(0[8-9]|1[0-4])$/.test(c.key)) await api('update_camera', { key: c.key, enabled: false }); }""")
+        # the finished race stays on the board until "New race" (the demo track reloads its marbles at once)
+        pg.evaluate("api('update_race', { auto_new_race: false })")
+        pg.wait_for_timeout(1500); step("review")
+        pg.click("#golive"); pg.wait_for_timeout(8000)
+        pg.click("#tiles .tile:nth-child(3)"); pg.wait_for_timeout(500)
+        for k in range(60):  # a race from its start, not one joined late
             st = pg.text_content("#rstate") or ""
-            if "مسابقه" in st and "جدید" not in st: break
+            if "انتظار" in st: break
+            if k % 10 == 0: pg.click("#newrace")
             pg.wait_for_timeout(1500)
-        pg.wait_for_timeout(5000); shot("12-live-race", wait=0)
+        for k in range(80):
+            st = pg.text_content("#rstate") or ""
+            if "در حال مسابقه" in st and "دیر" not in st: break
+            pg.wait_for_timeout(1000)
+        pg.wait_for_timeout(2500); shot("12-live-race", wait=0)
         for k in range(LIVE_WAIT // 3):
             st = pg.text_content("#rstate") or ""
             if any(x in st for x in ("Provisional", "Final", "موقت", "نهایی")): break
@@ -105,6 +120,7 @@ def setup():
         pg.mouse.click(1100, 600); pg.wait_for_timeout(600)
         print("confirm enabled:", pg.is_enabled("#confirmres"), pg.text_content("#rstate"), flush=True)
         pg.click("#confirmres", force=True); shot("15-live-confirmed", wait=1500)
+        pg.click("#newrace"); pg.wait_for_timeout(1500)
         pg.click("#live details.more summary"); shot("16-live-training", wait=800)
         pg.click("#stop"); pg.wait_for_timeout(4000); shot("17-back-to-setup", wait=1000)
         open(f"{OUT}/boxes.json", "w").write(json.dumps(BOXES, indent=1))
@@ -121,7 +137,7 @@ def live():
     boxes = {}
     with sync_playwright() as p:
         b = p.chromium.launch(**({"executable_path": os.environ["CHROMIUM"]} if os.environ.get("CHROMIUM") else {}))  # CHROMIUM: a browser other than Playwright's own
-        ctx = b.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1.5)
+        ctx = b.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1.5, reduced_motion="reduce")  # no row animation mid-shot
         ctx.add_init_script("try { localStorage.setItem('marbletrack.lang', 'fa') } catch {}")
         pg = ctx.new_page(); pg.on("pageerror", lambda e: print("ERR", e, flush=True))
         pg.goto(URL); pg.wait_for_timeout(2500)

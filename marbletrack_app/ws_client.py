@@ -161,7 +161,7 @@ class LeaderboardStreamer:
             self._loop.close()
 
     async def _run(self):
-        backoff = 0.5
+        backoff, logged = 0.5, ""
         while not self._stop.is_set():
             err = check_url(self.url)
             if err:
@@ -172,7 +172,7 @@ class LeaderboardStreamer:
                 async with _connect(self.url, self.token, 5.0) as ws:
                     self.state, self.detail = "connected", "Streaming"
                     self.connected_since = time.time()
-                    backoff = 0.5
+                    backoff, logged = 0.5, ""
                     seq = 0
 
                     async def send(msg):
@@ -213,12 +213,15 @@ class LeaderboardStreamer:
             except Exception as e:
                 if self._stop.is_set():
                     break
-                self.last_error = _explain(e)
+                err = _explain(e)
+                if err != logged:  # a server that is down all day: one line in the log, not one per retry
+                    log.warning("websocket: %s", err)
+                    logged = err
+                self.last_error = err
                 self.connected_since = None
                 self.reconnects += 1
                 delay = backoff * (0.7 + 0.6 * random.random())
                 self.state, self.detail = "reconnecting", f"{self.last_error} Retrying in {delay:.0f} s."
-                log.warning("websocket: %s", self.last_error)
                 end = time.monotonic() + delay
                 while time.monotonic() < end and not self._stop.is_set():
                     await asyncio.sleep(0.1)

@@ -261,6 +261,7 @@ details.more > div { margin-top: 14px; }
 .lrow .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lrow .val { text-align: right; font: 13px var(--mono); font-variant-numeric: tabular-nums; display: grid; justify-items: end; gap: 1px; }
 .lrow .val small { font: 11px var(--font); color: var(--faint); }
+.lrow .val .word { font: 12.5px var(--font); color: var(--faint); }
 .lrow.fin .rk { color: var(--accent); }
 .lrow.hid { opacity: .6; }
 .lrow.photo .val { color: var(--warn); }
@@ -345,6 +346,7 @@ textarea.input { min-height: 60px; resize: vertical; }
 /* pictures, charts and numbers keep their own direction */
 [dir=rtl] .viewer, [dir=rtl] .cover, [dir=rtl] .clock, [dir=rtl] .lrow .val, [dir=rtl] .kv dd, [dir=rtl] .cam-meta, [dir=rtl] .focus, [dir=rtl] .tile { direction: ltr; }
 [dir=rtl] .lrow .val { justify-items: start; text-align: left; }
+[dir=rtl] .lrow .val .word { direction: rtl; }
 [dir=rtl] .log { font-family: var(--font); font-size: 12.5px; }
 [dir=rtl] .log > div > span:first-child { unicode-bidi: isolate; direction: ltr; font: 12px var(--mono); margin-left: 6px; }
 [dir=rtl] .tile .t, [dir=rtl] .focus .cap { direction: rtl; }

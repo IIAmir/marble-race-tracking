@@ -951,13 +951,14 @@ function paintLive(d) {
   const leader = board.find((e) => e.status !== "finished");
   rows.innerHTML = board.map((e) => {
     const fin = e.finish_time != null, hid = e.status === "coasting" || e.status === "lost" || e.status === "unseen";
-    const val = fin ? fmtS(e.finish_time) : e.status === "unseen" ? "not seen yet" : e === leader ? fmtM(e.progress_m, 1) : `+${(e.gap_m).toFixed(2)} m`;
+    const unseen = !fin && e.status === "unseen";
+    const val = fin ? fmtS(e.finish_time) : unseen ? "" : e === leader ? fmtM(e.progress_m, 1) : `+${(e.gap_m).toFixed(2)} m`;
     const laps = S.st.project.laps || 1;
     const lapTxt = laps > 1 && !fin && e.status !== "unseen" ? `Lap ${e.lap || 1}/${laps} · ` : "";
-    const sub = lapTxt + (e.photo_finish ? "photo finish: review" : fin ? `#${e.rank}` : e.status === "coasting" ? "hidden" : e.status === "lost" ? "lost" : e.status === "acquiring" ? "new" : `${e.speed_mps.toFixed(2)} m/s`);
+    const sub = lapTxt + (e.photo_finish ? "photo finish: review" : fin ? `#${e.rank}` : e.status === "coasting" ? "hidden" : e.status === "lost" ? "lost" : e.status === "acquiring" ? "new" : unseen ? "" : `${e.speed_mps.toFixed(2)} m/s`);
     return `<div class="lrow ${fin ? "fin" : ""} ${hid ? "hid" : ""} ${e.photo_finish ? "photo" : ""}" data-id="${esc(e.marble_id)}">
       <span class="rk">${e.rank}</span><span class="swatch" style="background:${esc(e.color)}"></span><span class="nm" data-noi18n title="${esc(e.name)}">${esc(e.name)}</span>
-      <span class="val">${esc(val)}<small>${esc(sub)}</small></span></div>`;
+      <span class="val">${unseen ? '<span class="word">not seen yet</span>' : esc(val)}<small>${esc(sub)}</small></span></div>`;
   }).join("");
   if (!reduceMotion) $$(".lrow", rows).forEach((el) => {
     const y0 = before.get(el.dataset.id); if (y0 == null) return;

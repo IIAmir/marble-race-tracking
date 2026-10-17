@@ -21,6 +21,8 @@ SRC = ROOT / "docs" / "guide"
 OUT = ROOT / "docs" / "MarbleTrack-Guide-FA.pdf"
 FONT = ROOT / "marbletrack_app" / "web" / "fonts" / "Vazirmatn.woff2"
 
+FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
 # what each marked element is, per screenshot (selectors as recorded in img/boxes.json)
 LEGENDS = {
     "00-first-run": {
@@ -152,7 +154,9 @@ LEGENDS = {
     },
     "14-live-popover": {
         "#pop select": "توپی که ردیاب این توپ را با آن قاطی کرده.",
-        "#pop [data-swap]": "<b>جابه‌جا کردن این دو</b>. زیر آن «یک رتبه بالاتر» و «یک رتبه پایین‌تر» است.",
+        "#pop [data-swap]": "<b>جابه‌جا کردن این دو</b>.",
+        "#pop [data-mv='-1']": "<b>یک رتبه بالاتر</b> (فقط پس از پایان مسابقه).",
+        "#pop [data-mv='1']": "<b>یک رتبه پایین‌تر</b> (فقط پس از پایان مسابقه).",
     },
     "16-live-training": {
         "#hlabel": "توپی که تنها رها می‌کنید (یا «بدون توپ»).",
@@ -161,24 +165,34 @@ LEGENDS = {
 }
 
 
-def _marker_pos(box):
-    """Where a marker goes: just past the end (left, the interface is right to left) of a button or
-    field, so it never covers its label; inside the top-left corner of a large area."""
+def _marker_pos(box, taken=()):
+    """Where a number badge goes: on a corner of a button or field (top right first: the interface is
+    right to left, so labels start there but never reach the corner), the first corner that keeps
+    clear of the badges already placed; inside the top-right corner of a large area. The element
+    itself gets an outline, so the badge never has to cover it."""
     _, x, y, w, h = box
     if h > 0.12 or w > 0.35:
-        return max(0.025, x + 0.02), min(0.97, y + 0.035)
-    return max(0.015, x - 0.006), y + h / 2
+        spots = [(x + w - 0.02, y + 0.035), (x + 0.02, y + 0.035), (x + w - 0.02, y + h - 0.035)]
+    else:
+        spots = [(x + w, y), (x, y), (x + w, y + h), (x, y + h), (x - 0.012, y + h / 2), (x + w + 0.012, y + h / 2)]
+    spots = [(min(0.985, max(0.015, px)), min(0.975, max(0.025, py))) for px, py in spots]
+    clear = lambda p: all(abs(p[0] - q[0]) > 0.026 or abs(p[1] - q[1]) > 0.042 for q in taken)
+    return next((p for p in spots if clear(p)), spots[0])
 
 
 def figure(name: str, caption: str, boxes: dict) -> str:
     legend = LEGENDS.get(name, {})
-    marks, items = [], []
+    marks, items, taken = [], [], []
     for box in boxes.get(name, []):
         if not box or box[0] not in legend:
             continue
-        n = len(marks) + 1
-        px, py = _marker_pos(box)
-        marks.append(f'<span class="mk" style="left:{px * 100:.2f}%;top:{py * 100:.2f}%">{n}</span>')
+        n = len(items) + 1
+        _, x, y, w, h = box
+        px, py = _marker_pos(box, taken)
+        taken.append((px, py))
+        if not (h > 0.12 or w > 0.35):
+            marks.append(f'<span class="hl" style="left:{x * 100:.2f}%;top:{y * 100:.2f}%;width:{w * 100:.2f}%;height:{h * 100:.2f}%"></span>')
+        marks.append(f'<span class="mk" style="left:{px * 100:.2f}%;top:{py * 100:.2f}%">{str(n).translate(FA_DIGITS)}</span>')
         items.append(f"<li>{legend[box[0]]}</li>")
     leg = f'<ol class="legend">{"".join(items)}</ol>' if items else ""
     return (f'<figure class="shot"><div class="frame"><img src="img/{name}.jpg" alt="">{"".join(marks)}</div>'
