@@ -58,7 +58,7 @@ def test_render_and_operator_calibration_find_a_parked_ball(course):
 
     scene = build_scene(course, 3)
     shadows = ShadowMap(scene, res=1024)
-    s0 = course.finish_s - 0.2
+    s0 = course.finish_s - 0.4  # a stretch no scenery hides from this camera
     P, T, L, U, _ = course.frame(np.array([s0]))
     target = P[0] + BALL_R * U[0]
     side = np.cross(T[0], [0, 0, 1.0])

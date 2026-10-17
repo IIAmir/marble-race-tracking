@@ -105,3 +105,18 @@ def test_file_names_are_safe_on_windows_and_images_work_in_non_ascii_folders(tmp
     assert np.array_equal(imread(folder / "x.png"), img)
     assert imread(folder / "missing.png") is None
     assert not list(folder.glob(".*.tmp"))
+
+
+def test_one_version_everywhere():
+    import re
+    from pathlib import Path
+
+    from marbletrack_app import __version__
+
+    root = Path(__file__).resolve().parents[1]
+    assert re.search(r'#define AppVersion "([^"]+)"', (root / "windows/installer.iss").read_text()).group(1) == __version__
+    info = (root / "windows/version_info.txt").read_text()
+    assert re.search(r'"FileVersion", "([^"]+)"', info).group(1) == __version__
+    assert re.search(r'"ProductVersion", "([^"]+)"', info).group(1) == __version__
+    assert re.search(r"filevers=\(([\d, ]+)\)", info).group(1).replace(" ", "").split(",")[:3] == __version__.split(".")
+    assert re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M).group(1) == __version__

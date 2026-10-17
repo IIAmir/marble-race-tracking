@@ -30,7 +30,15 @@ Name: "{group}\MarbleTrack logs"; Filename: "{userappdata}\MarbleTrack\logs"
 Name: "{autodesktop}\MarbleTrack"; Filename: "{app}\MarbleTrack.exe"; Tasks: desktopicon
 
 [Run]
+; NDI cameras are found by multicast DNS and stream over the network: let MarbleTrack receive them
+; without the firewall question (a new camera network is often classed as Public). Its own UI
+; server listens on 127.0.0.1 only. Needs an all-users install; otherwise Windows asks on first start.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MarbleTrack (NDI cameras)"""; Flags: runhidden; Check: IsAdminInstallMode
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MarbleTrack (NDI cameras)"" dir=in action=allow program=""{app}\MarbleTrack.exe"" enable=yes profile=any"; Flags: runhidden; Check: IsAdminInstallMode; StatusMsg: "Allowing MarbleTrack through the Windows firewall..."
 Filename: "{app}\MarbleTrack.exe"; Description: "Start MarbleTrack"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MarbleTrack (NDI cameras)"""; Flags: runhidden; Check: IsAdminInstallMode; RunOnceId: "MarbleTrackFirewall"
 
 [Code]
 function WebView2Installed(): Boolean;
